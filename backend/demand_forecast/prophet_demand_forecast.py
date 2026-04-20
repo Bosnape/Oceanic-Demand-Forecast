@@ -138,6 +138,7 @@ def prepare_prophet_df(data, sku):
           .rename(columns={'date': 'ds', 'units_sold': 'y'})
           .sort_values('ds')
           .reset_index(drop=True))
+    df['ds'] = pd.to_datetime(df['ds'])
     return df
 
 def train_prophet(df_train, holidays_df, params):
@@ -170,7 +171,36 @@ def evaluate(forecast, df_test):
 # =============================================================================
 
 def hyperparameter_tuning(df_train, holidays_df):
+    """
+    Tune Prophet hyperparameters via cross-validation.
+    CV windows scale with available data; falls back to sensible defaults
+    when the dataset is too short for meaningful cross-validation.
+    """
     print("Running hyperparameter tuning on pilot SKU...")
+
+    DEFAULT_PARAMS = {
+        'changepoint_prior_scale': 0.05,
+        'seasonality_prior_scale': 1.0,
+        'seasonality_mode': 'additive',
+    }
+
+    n_days = (df_train['ds'].max() - df_train['ds'].min()).days if len(df_train) > 1 else 0
+
+    # Horizon is fixed at 90 days — matches our forecast period.
+    # Initial scales with available data but is capped at the original 1460 days.
+    # A valid CV fold requires: initial + period + horizon ≤ n_days.
+    # With period=horizon=90 that means initial ≤ n_days - 180.
+    # We also enforce initial ≥ 180 (2× horizon) for a meaningful training window.
+    HORIZON_DAYS = 90
+    initial_days = min(1460, n_days - 2 * HORIZON_DAYS)  # leaves room for one full fold
+
+    if initial_days < 180:
+        print(f"Skipping CV tuning ({n_days} days of pilot data) — using default parameters.\n")
+        return DEFAULT_PARAMS
+
+    initial = f'{initial_days} days'
+    horizon = f'{HORIZON_DAYS} days'
+    period  = '90 days'
 
     param_grid = {
         'changepoint_prior_scale': [0.01, 0.05, 0.1, 0.5],
@@ -192,8 +222,8 @@ def hyperparameter_tuning(df_train, holidays_df):
         m.add_regressor('sell_price')
         m.fit(df_train)
 
-        df_cv = cross_validation(m, initial='1460 days',
-                                 period='90 days', horizon='90 days',
+        df_cv = cross_validation(m, initial=initial,
+                                 period=period, horizon=horizon,
                                  parallel='processes')
         df_m = performance_metrics(df_cv)
         results.append({**params, 'mae': df_m['mae'].mean()})
@@ -369,7 +399,12 @@ def plot_metrics_summary(df_metrics):
 # =============================================================================
 
 def save_predictions_to_db(forecasts, company_id=1):
-    
+    """
+    Persist forecast results to the prediction table.
+    Deletes existing predictions for the company and inserts the new batch in one
+    bulk operation. All rows in a single batch share the same created_at timestamp,
+    which is used by GET /api/predictions/status as the last_run_at signal.
+    """
     db: Session = SessionLocal()
 
     try:
@@ -425,14 +460,15 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
     Called from POST /upload-sales as a background task.
     Trains on ALL historical data and forecasts the next 90 days.
     """
-    CUTOFF_DAYS   = 90   # used only for pilot hyperparameter tuning
     FORECAST_DAYS = 90
 
     holidays_df = build_holidays(df)
 
-    # Use a tuning cutoff only for hyperparameter search (pilot SKU)
-    # The actual training uses all available data
-    tuning_cutoff = df['date'].max() - pd.Timedelta(days=CUTOFF_DAYS)
+    # Tuning cutoff: reserve 20% of the dataset for pilot CV, capped at 90 days.
+    # This keeps df_pilot_train non-empty even for short test files.
+    data_span_days = (df['date'].max() - df['date'].min()).days
+    tuning_cutoff_days = max(7, min(90, int(data_span_days * 0.2)))
+    tuning_cutoff = df['date'].max() - pd.Timedelta(days=tuning_cutoff_days)
     full_cutoff   = df['date'].max()  # train on everything
 
     # Pilot SKU tuning (uses tuning_cutoff to have test data for CV)

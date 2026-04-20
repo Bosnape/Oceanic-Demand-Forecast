@@ -1,5 +1,8 @@
 import json
+import logging
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,19 +43,44 @@ async def health_check():
 # Background task
 # =============================================================================
 
-def run_prophet_background(df: pd.DataFrame, company_id: int, data_source_id: int):
-    """Runs Prophet pipeline in background and updates DataSource status."""
+def run_prophet_background(company_id: int, data_source_id: int):
+    """
+    Runs Prophet pipeline in background and updates DataSource status.
+    Always trains on the full historical data stored in sales_transaction,
+    so successive uploads accumulate — not overwrite — the training set.
+    """
     db = SessionLocal()
     try:
-        # Update status to processing
         data_source = db.query(DataSource).filter(DataSource.id == data_source_id).first()
         data_source.status = "processing"
         db.commit()
 
-        # Run Prophet pipeline
-        run_pipeline(df, company_id=company_id)
+        # Load full historical data from DB (includes all previous uploads via upsert)
+        rows = (
+            db.query(SalesTransaction)
+            .filter(SalesTransaction.company_id == company_id)
+            .all()
+        )
+        if not rows:
+            data_source.status = "failed"
+            db.commit()
+            logger.error("Prophet pipeline: no sales data found for company_id=%d", company_id)
+            return
 
-        # Update status to ready
+        full_df = pd.DataFrame([{
+            "item_id": r.item_id,
+            "store_id": r.store_id,
+            "cat_id": r.cat_id,
+            "dept_id": r.dept_id,
+            "date": pd.Timestamp(r.date),
+            "units_sold": r.units_sold,
+            "sell_price": float(r.sell_price) if r.sell_price is not None else None,
+            "holiday_promotion": r.holiday_promotion,
+            "event_name_1": r.event_name_1,
+        } for r in rows])
+
+        run_pipeline(full_df, company_id=company_id)
+
         data_source.status = "ready"
         db.commit()
 
@@ -60,7 +88,7 @@ def run_prophet_background(df: pd.DataFrame, company_id: int, data_source_id: in
         data_source = db.query(DataSource).filter(DataSource.id == data_source_id).first()
         data_source.status = "failed"
         db.commit()
-        print(f"Prophet pipeline failed: {e}")
+        logger.exception("Prophet pipeline failed for company_id=%d", company_id)
     finally:
         db.close()
 
@@ -147,10 +175,9 @@ async def upload_sales(
         db.commit()
         transactions = records
 
-        # Step 6: Trigger Prophet pipeline in background
+        # Step 5: Trigger Prophet pipeline in background
         background_tasks.add_task(
             run_prophet_background,
-            df=dataframe,
             company_id=company_id,
             data_source_id=data_source.id,
         )
@@ -277,6 +304,7 @@ async def upload_inventory(
     description="Returns the status of the latest demand forecast pipeline run. Frontend polls this endpoint to know when predictions are ready.",
 )
 async def get_predictions_status(db: Session = Depends(get_db)):
+    """Return pipeline status and the timestamp of the last completed forecast run."""
     try:
         data_source = (
             db.query(DataSource)
@@ -285,7 +313,7 @@ async def get_predictions_status(db: Session = Depends(get_db)):
         )
 
         if not data_source:
-            return {"status": "no_data", "message": "No files uploaded yet."}
+            return {"status": "no_data", "message": "No files uploaded yet.", "last_run_at": None}
 
         messages = {
             "uploaded":   "File received. Forecast pipeline starting...",
@@ -294,11 +322,20 @@ async def get_predictions_status(db: Session = Depends(get_db)):
             "failed":     "Forecast generation failed. Please try uploading again.",
         }
 
+        last_prediction = (
+            db.query(Prediction.created_at)
+            .filter(Prediction.company_id == data_source.company_id)
+            .order_by(Prediction.created_at.desc())
+            .first()
+        )
+        last_run_at = last_prediction.created_at.isoformat() if last_prediction else None
+
         return {
             "status": data_source.status,
             "message": messages.get(data_source.status, "Unknown status."),
             "filename": data_source.filename,
             "upload_date": data_source.upload_date.isoformat(),
+            "last_run_at": last_run_at,
         }
 
     except Exception as e:
