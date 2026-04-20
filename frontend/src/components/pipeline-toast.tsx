@@ -11,9 +11,11 @@ interface PipelineToastProps {
   status: PredictionsStatus["status"]
   visible: boolean
   onDismiss: () => void
+  lastRunAt?: string
 }
 
-export function PipelineToast({ status, visible, onDismiss }: PipelineToastProps) {
+/** Floating toast that shows Prophet pipeline status transitions and the last-run timestamp. */
+export function PipelineToast({ status, visible, onDismiss, lastRunAt }: PipelineToastProps) {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => { setMounted(true) }, [])
@@ -51,9 +53,22 @@ export function PipelineToast({ status, visible, onDismiss }: PipelineToastProps
               <p className="text-xs text-muted-foreground mt-0.5">
                 {(status === "processing" || status === "uploaded") && "Esto puede tomar varios minutos."}
                 {status === "ready" && (
-                  <Link href="/predictions" className="text-primary hover:underline">
-                    Ver predicciones →
-                  </Link>
+                  <>
+                    {lastRunAt && (
+                      <span className="block">
+                        {new Date(lastRunAt).toLocaleString("es-CO", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    )}
+                    <Link href="/predictions" className="text-primary hover:underline">
+                      Ver predicciones →
+                    </Link>
+                  </>
                 )}
                 {status === "failed" && "Intenta subir el archivo nuevamente."}
               </p>

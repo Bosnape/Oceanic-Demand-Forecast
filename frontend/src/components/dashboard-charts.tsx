@@ -76,8 +76,10 @@ interface TopSkuPoint {
 export function SalesForecastChart() {
   const [data, setData] = useState<TopSkuPoint[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    setLoading(true)
     getPredictions()
       .then((preds) => {
         if (preds.length === 0) { setData([]); return }
@@ -98,6 +100,12 @@ export function SalesForecastChart() {
       })
       .catch(() => setData([]))
       .finally(() => setLoading(false))
+  }, [refreshKey])
+
+  useEffect(() => {
+    const handler = () => setRefreshKey((k) => k + 1)
+    window.addEventListener("pipeline:dataready", handler)
+    return () => window.removeEventListener("pipeline:dataready", handler)
   }, [])
 
   if (loading) return <ChartSkeleton />
@@ -165,8 +173,10 @@ interface InventoryPoint {
 export function InventoryChart() {
   const [data, setData] = useState<InventoryPoint[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    setLoading(true)
     getInventory()
       .then((res) => {
         const sorted = [...res.items]
@@ -181,6 +191,12 @@ export function InventoryChart() {
       })
       .catch(() => setData([]))
       .finally(() => setLoading(false))
+  }, [refreshKey])
+
+  useEffect(() => {
+    const handler = () => setRefreshKey((k) => k + 1)
+    window.addEventListener("pipeline:dataready", handler)
+    return () => window.removeEventListener("pipeline:dataready", handler)
   }, [])
 
   if (loading) return <ChartSkeleton />
@@ -236,8 +252,10 @@ interface CategoryPoint {
 export function CategoryDistributionChart() {
   const [data, setData] = useState<CategoryPoint[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    setLoading(true)
     getSales()
       .then((sales) => {
         const byCategory: Record<string, number> = {}
@@ -254,6 +272,12 @@ export function CategoryDistributionChart() {
       })
       .catch(() => setData([]))
       .finally(() => setLoading(false))
+  }, [refreshKey])
+
+  useEffect(() => {
+    const handler = () => setRefreshKey((k) => k + 1)
+    window.addEventListener("pipeline:dataready", handler)
+    return () => window.removeEventListener("pipeline:dataready", handler)
   }, [])
 
   if (loading) return <ChartSkeleton />

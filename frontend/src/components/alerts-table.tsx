@@ -69,8 +69,16 @@ export function AlertsTable() {
   const [alerts, setAlerts] = useState<AlertRow[]>([])
   const [loading, setLoading] = useState(true)
   const [hasTbd, setHasTbd] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    const handler = () => setRefreshKey((k) => k + 1)
+    window.addEventListener("pipeline:dataready", handler)
+    return () => window.removeEventListener("pipeline:dataready", handler)
+  }, [])
+
+  useEffect(() => {
+    setLoading(true)
     getInventory()
       .then((res) => {
         setAlerts(buildAlerts(res.items))
@@ -78,7 +86,7 @@ export function AlertsTable() {
       })
       .catch(() => setAlerts([]))
       .finally(() => setLoading(false))
-  }, [])
+  }, [refreshKey])
 
   return (
     <Card className="bg-card">

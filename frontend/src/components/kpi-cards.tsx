@@ -100,8 +100,21 @@ function formatPct(current: number, prev: number): { label: string; type: "posit
 export function KpiCardsGrid() {
   const [loading, setLoading] = useState(true)
   const [kpis, setKpis] = useState<KpiCardProps[]>([])
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    const handler = () => setRefreshKey((k) => k + 1)
+    window.addEventListener("pipeline:dataready", handler)
+    // sales_transaction is persisted immediately on upload — no need to wait for Prophet
+    window.addEventListener("pipeline:refetch", handler)
+    return () => {
+      window.removeEventListener("pipeline:dataready", handler)
+      window.removeEventListener("pipeline:refetch", handler)
+    }
+  }, [])
+
+  useEffect(() => {
+    setLoading(true)
     async function load() {
       try {
         // Use the latest available date in the dataset as "now"
@@ -193,7 +206,7 @@ export function KpiCardsGrid() {
     }
 
     load()
-  }, [])
+  }, [refreshKey])
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

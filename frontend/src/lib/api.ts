@@ -95,6 +95,7 @@ export interface PredictionsStatus {
   message: string
   filename?: string
   upload_date?: string
+  last_run_at?: string
 }
 
 export interface SalesRange {

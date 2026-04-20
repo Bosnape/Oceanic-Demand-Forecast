@@ -12,16 +12,19 @@ interface DashboardLayoutProps {
   children: ReactNode
   title?: string
   subtitle?: string
+  showLastRunAt?: boolean
 }
 
 const POLL_INTERVAL = 10000
 
-export function DashboardLayout({ children, title, subtitle }: DashboardLayoutProps) {
+/** Shared layout wrapper: sidebar, page header, pipeline status polling, and notifications. */
+export function DashboardLayout({ children, title, subtitle, showLastRunAt }: DashboardLayoutProps) {
   const { isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
 
   // Pipeline notification state
   const [pipelineStatus, setPipelineStatus] = useState<PredictionsStatus["status"]>("no_data")
+  const [lastRunAt, setLastRunAt] = useState<string | null>(null)
   const [toastVisible, setToastVisible] = useState(false)
   const [toastDismissed, setToastDismissed] = useState(false)
   const prevStatusRef = useRef<PredictionsStatus["status"]>("no_data")
@@ -39,8 +42,9 @@ export function DashboardLayout({ children, title, subtitle }: DashboardLayoutPr
       const next = data.status
       prevStatusRef.current = next
       setPipelineStatus(next)
+      if (data.last_run_at) setLastRunAt(data.last_run_at)
 
-      // Show toast only on transition TO processing/ready/failed — not on initial load
+      // Show toast on status transitions; also fires on initial load if already processing
       if (prev !== next) {
         if (next === "processing" || next === "uploaded") {
           setToastDismissed(false)
@@ -53,6 +57,7 @@ export function DashboardLayout({ children, title, subtitle }: DashboardLayoutPr
           // Auto-dismiss after 10s
           if (autoDismissRef.current) clearTimeout(autoDismissRef.current)
           autoDismissRef.current = setTimeout(() => setToastVisible(false), 10000)
+          window.dispatchEvent(new CustomEvent("pipeline:dataready"))
           stopPolling()
         }
         if (next === "failed") {
@@ -120,10 +125,24 @@ export function DashboardLayout({ children, title, subtitle }: DashboardLayoutPr
                 <p className="text-sm text-muted-foreground">{subtitle}</p>
               )}
             </div>
-            <NotificationBell
-              hasActiveNotification={(pipelineStatus === "processing" || pipelineStatus === "uploaded" || pipelineStatus === "failed") && toastDismissed}
-              onClick={() => { setToastDismissed(false); setToastVisible(true) }}
-            />
+            <div className="flex items-center gap-3">
+              {showLastRunAt && lastRunAt && (
+                <span className="hidden text-xs text-muted-foreground sm:block">
+                  Actualizado:{" "}
+                  {new Date(lastRunAt).toLocaleString("es-CO", {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
+              )}
+              <NotificationBell
+                hasActiveNotification={(pipelineStatus === "processing" || pipelineStatus === "uploaded" || pipelineStatus === "failed") && toastDismissed}
+                onClick={() => { setToastDismissed(false); setToastVisible(true) }}
+              />
+            </div>
           </div>
           <div className="px-6 py-6 lg:px-8">{children}</div>
         </main>
@@ -132,6 +151,7 @@ export function DashboardLayout({ children, title, subtitle }: DashboardLayoutPr
       <PipelineToast
         status={pipelineStatus}
         visible={toastVisible}
+        lastRunAt={lastRunAt ?? undefined}
         onDismiss={() => { setToastVisible(false); setToastDismissed(true) }}
       />
     </div>

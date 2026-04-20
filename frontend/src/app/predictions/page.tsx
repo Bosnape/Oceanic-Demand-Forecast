@@ -231,9 +231,18 @@ export default function PredictionsPage() {
   const [selectedSku, setSelectedSku] = useState<string>("")
   const [granularity, setGranularity] = useState<Granularity>("daily")
   const [errorMsg, setErrorMsg] = useState("")
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  // Load pipeline status + predictions on mount
+  // Re-load when the pipeline completes a new run
   useEffect(() => {
+    const handler = () => setRefreshKey((k) => k + 1)
+    window.addEventListener("pipeline:dataready", handler)
+    return () => window.removeEventListener("pipeline:dataready", handler)
+  }, [])
+
+  // Load pipeline status + predictions on mount and after each pipeline completion
+  useEffect(() => {
+    setPageState("loading")
     getPredictionsStatus()
       .then((status) => {
         if (status.status === "no_data") { setPageState("no_data"); return }
@@ -253,7 +262,7 @@ export default function PredictionsPage() {
         setErrorMsg(axios.isAxiosError(err) ? (err.response?.data?.detail ?? err.message) : "Error desconocido")
         setPageState("error")
       })
-  }, [])
+  }, [refreshKey])
 
   // Load all sales (no date filter — data is historical, not recent)
   useEffect(() => {
@@ -308,7 +317,7 @@ export default function PredictionsPage() {
   }
 
   return (
-    <DashboardLayout title="Predicciones de Demanda" subtitle="Pronósticos ML con intervalos de confianza por SKU">
+    <DashboardLayout title="Predicciones de Demanda" subtitle="Pronósticos ML con intervalos de confianza por SKU" showLastRunAt>
 
       {/* Loading */}
       {pageState === "loading" && (
