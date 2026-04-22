@@ -512,62 +512,6 @@ async def get_sales(
 )
 async def get_inventory(db: Session = Depends(get_db)):
     try:
-        # LEFT JOIN: every snapshot row is returned even if analysis
-        # hasn't run yet (analysis columns will be None in that case)
-        results = (
-            db.query(InventorySnapshot, InventoryAnalysis)
-            .outerjoin(
-                InventoryAnalysis,
-                InventoryAnalysis.inventory_snapshot_id == InventorySnapshot.id,
-            )
-            .order_by(InventorySnapshot.item_id)
-            .all()
-        )
-
-        if not results:
-            raise HTTPException(status_code=404, detail="No inventory data found. Please upload an inventory file first.")
-
-        return {
-            "items": [
-                {
-                    "item_id": s.item_id,
-                    "store_id": s.store_id,
-                    "current_stock": s.inventory_on_hand,
-                    "available_stock": s.inventory_available if s.inventory_available is not None else s.inventory_on_hand,
-                    "lead_time_days": s.lead_time_days,
-                    "unit_cost": float(s.unit_cost),
-                    "last_updated": s.date.isoformat(),
-                    # --- From inventory_analysis (None if analysis hasn't run yet) ---
-                    "stock_status": a.stock_status if a else "pending",
-                    "reorder_point": float(a.reorder_point) if a and a.reorder_point is not None else None,
-                    "next_month_forecast": float(a.units_needed_next_month) if a and a.units_needed_next_month is not None else 0,
-                    "stock_status": _compute_stock_status(s, forecast_by_sku_inv),
-                    "slow_moving_flag": a.slow_moving_flag if a else None,
-                    "immobilized_capital": float(a.immobilized_capital) if a and a.immobilized_capital is not None else None,
-                    "days_of_stock": float(a.days_of_stock) if a and a.days_of_stock is not None else None,
-                }
-                for s, a in results
-            ]
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching inventory: {e}")
-
-
-    # =============================================================================
-# GET /api/inventory
-# =============================================================================
-
-@app.get(
-    "/api/inventory",
-    tags=["Inventory"],
-    summary="Get current inventory by SKU",
-    description="Returns current stock levels per SKU from the latest inventory snapshot.",
-)
-async def get_inventory(db: Session = Depends(get_db)):
-    try:
         from sqlalchemy import func
         from datetime import date, timedelta
 
