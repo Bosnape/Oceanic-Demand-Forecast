@@ -84,7 +84,7 @@ export default function InventoryPage() {
               highlight={belowReorderCount > 0 ? "destructive" : undefined}
             />
             <StatCard
-              label="Slow Moving"
+              label="Movimiento Lento"
               value={state === "ready" ? String(slowMovingCount) : "-"}
               sub="SKUs de movimiento lento"
               icon={<TrendingDown className="h-5 w-5" />}

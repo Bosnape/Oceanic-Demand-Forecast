@@ -31,7 +31,7 @@ function StockStatusBadge({ item }: { item: InventoryItem }) {
     return (
       <Badge variant="secondary" className="gap-1 bg-warning/10 text-warning">
         <TrendingDown className="h-3 w-3" />
-        Slow Moving
+        Mov. Lento
       </Badge>
     )
   }
@@ -80,7 +80,7 @@ function FilterTabs({ active, counts, onChange }: FilterTabProps) {
   const tabs: { key: FilterType; label: string; count: number }[] = [
     { key: "all",    label: "Todos",          count: counts.all    },
     { key: "reorder",label: "Por Reordenar",  count: counts.reorder},
-    { key: "slow",   label: "Slow Moving",    count: counts.slow   },
+    { key: "slow",   label: "Movimiento Lento", count: counts.slow   },
   ]
 
   return (
@@ -158,7 +158,7 @@ export function InventoryTable({ items }: InventoryTableProps) {
                 )}
                 {slowItems.length > 0 && (
                   <span className="text-warning font-medium">
-                    {slowItems.length} slow moving ·{" "}
+                    {slowItems.length} mov. lento ·{" "}
                   </span>
                 )}
                 {items.length} SKUs totales
