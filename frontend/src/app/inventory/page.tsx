@@ -6,6 +6,7 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import { InventoryTable } from "@/components/tables/InventoryTable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getInventory, type InventoryItem } from "@/lib/api"
+import { PackageX, ShoppingCart, TrendingDown, DollarSign } from "lucide-react"
 
 type LoadState = "loading" | "ready" | "empty" | "error"
 
@@ -35,12 +36,17 @@ export default function InventoryPage() {
   }, [])
 
   const totalStock = items.reduce((acc, i) => acc + i.current_stock, 0)
-  const criticalCount = items.filter((i) => i.stock_status === "critical").length
-  const lowCount = items.filter((i) => i.stock_status === "low").length
-  const avgLeadTime =
-    items.length > 0
-      ? (items.reduce((acc, i) => acc + i.lead_time_days, 0) / items.length).toFixed(1)
-      : "-"
+
+  const belowReorderCount = items.filter(
+    (i) => i.reorder_point != null && i.current_stock <= i.reorder_point
+  ).length
+
+  const slowMovingCount = items.filter((i) => i.slow_moving_flag === true).length
+
+  const totalImmobilized = items.reduce(
+    (acc, i) => acc + (i.immobilized_capital ?? 0),
+    0
+  )
 
   return (
     <DashboardLayout
@@ -56,7 +62,7 @@ export default function InventoryPage() {
       <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {state === "loading" ? (
           Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 rounded-xl" />
+            <Skeleton key={i} className="h-28 rounded-xl" />
           ))
         ) : (
           <>
@@ -64,23 +70,42 @@ export default function InventoryPage() {
               label="Total en Stock"
               value={state === "ready" ? totalStock.toLocaleString() : "-"}
               sub="unidades en inventario"
+              icon={<ShoppingCart className="h-5 w-5" />}
+              iconColor="text-primary"
+              iconBg="bg-primary/10"
             />
             <StatCard
-              label="SKUs Totales"
-              value={state === "ready" ? String(items.length) : "-"}
-              sub="productos registrados"
+              label="Por Reordenar"
+              value={state === "ready" ? String(belowReorderCount) : "-"}
+              sub="SKUs bajo punto de reorden"
+              icon={<PackageX className="h-5 w-5" />}
+              iconColor={belowReorderCount > 0 ? "text-destructive" : "text-muted-foreground"}
+              iconBg={belowReorderCount > 0 ? "bg-destructive/10" : "bg-muted"}
+              highlight={belowReorderCount > 0 ? "destructive" : undefined}
             />
             <StatCard
-              label="SKUs Críticos"
-              value={state === "ready" ? String(criticalCount) : "-"}
-              sub="sin stock disponible"
-              highlight="destructive"
+              label="Slow Moving"
+              value={state === "ready" ? String(slowMovingCount) : "-"}
+              sub="SKUs de movimiento lento"
+              icon={<TrendingDown className="h-5 w-5" />}
+              iconColor={slowMovingCount > 0 ? "text-warning" : "text-muted-foreground"}
+              iconBg={slowMovingCount > 0 ? "bg-warning/10" : "bg-muted"}
+              highlight={slowMovingCount > 0 ? "warning" : undefined}
             />
             <StatCard
-              label="Lead Time Promedio"
-              value={state === "ready" ? `${avgLeadTime}d` : "-"}
-              sub="días de reabastecimiento"
-              highlight={lowCount > 0 ? "warning" : undefined}
+              label="Capital Inmovilizado"
+              value={
+                state === "ready"
+                  ? totalImmobilized > 0
+                    ? `$${totalImmobilized.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                    : "$0"
+                  : "-"
+              }
+              sub="en inventario sin rotación"
+              icon={<DollarSign className="h-5 w-5" />}
+              iconColor={totalImmobilized > 0 ? "text-warning" : "text-muted-foreground"}
+              iconBg={totalImmobilized > 0 ? "bg-warning/10" : "bg-muted"}
+              highlight={totalImmobilized > 0 ? "warning" : undefined}
             />
           </>
         )}
@@ -122,23 +147,34 @@ function StatCard({
   label,
   value,
   sub,
+  icon,
+  iconColor,
+  iconBg,
   highlight,
 }: {
   label: string
   value: string
   sub: string
+  icon: React.ReactNode
+  iconColor: string
+  iconBg: string
   highlight?: "destructive" | "warning"
 }) {
   return (
     <div className="rounded-xl border bg-card p-5 shadow-sm">
-      <p className="text-sm font-medium text-muted-foreground">{label}</p>
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-muted-foreground">{label}</p>
+        <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${iconBg} ${iconColor}`}>
+          {icon}
+        </div>
+      </div>
       <p
         className={
           highlight === "destructive"
-            ? "mt-1 text-2xl font-bold text-destructive"
+            ? "mt-2 text-2xl font-bold text-destructive"
             : highlight === "warning"
-            ? "mt-1 text-2xl font-bold text-warning"
-            : "mt-1 text-2xl font-bold tracking-tight text-card-foreground"
+            ? "mt-2 text-2xl font-bold text-warning"
+            : "mt-2 text-2xl font-bold tracking-tight text-card-foreground"
         }
       >
         {value}
