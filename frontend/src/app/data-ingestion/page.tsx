@@ -106,10 +106,24 @@ export default function DataIngestionPage() {
   }, [])
 
   const processFile = useCallback(async (file: File) => {
-    const ext = file.name.split(".").pop()?.toLowerCase()
-    if (ext !== "csv" && ext !== "xlsx" && ext !== "xls") {
-      return
-    }
+const ext = file.name.split(".").pop()?.toLowerCase()
+if (ext !== "csv" && ext !== "xlsx" && ext !== "xls") {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  setFiles((prev) => [
+    {
+      id,
+      name: file.name,
+      size: file.size,
+      type: "csv",
+      uploadType,
+      status: "error",
+      progress: 100,
+      error: `format not supported: .${ext ?? "unknown"}. Use .csv, .xlsx o .xls`,
+    },
+    ...prev,
+  ])
+  return
+}
 
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
     const newFile: UploadedFile = {
@@ -430,11 +444,11 @@ export default function DataIngestionPage() {
                             </Badge>
                           )}
                           {file.status === "error" && (
-                            <Badge variant="destructive" className="w-fit">
-                              <XCircle className="mr-1 h-3 w-3" />
-                              {file.error ?? "Error al procesar"}
-                            </Badge>
-                          )}
+                          <div className="flex items-start gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+                            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span className="break-words">{file.error ?? "Error processing file"}</span>
+                          </div>
+                        )}
                         </li>
                       ))}
                     </ul>
