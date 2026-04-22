@@ -1,6 +1,7 @@
 import json
 import logging
 import pandas as pd
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +14,19 @@ from sqlalchemy.orm import Session
 from api.validation import validate_sales_dataframe, validate_inventory_dataframe
 from demand_forecast.prophet_demand_forecast import run_pipeline
 
-from database.database import get_db, SessionLocal
-from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot
+from database.database import get_db, SessionLocal, init_db
+from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot, InventoryAnalysis
+from inventory.inventory_analysis import run_inventory_analysis
 
-app = FastAPI(title="Oceanic Demand Forecast API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup tasks before the API begins serving requests."""
+    init_db()
+    yield
+
+
+app = FastAPI(title="Oceanic Demand Forecast API", lifespan=lifespan)
 
 origins = [
     "http://localhost:3000",
@@ -83,6 +93,9 @@ def run_prophet_background(company_id: int, data_source_id: int):
 
         data_source.status = "ready"
         db.commit()
+
+        # Re-run inventory analysis so reorder point and slow-moving reflect the freshly generated predictions
+        run_inventory_analysis(company_id, db)
 
     except Exception as e:
         data_source = db.query(DataSource).filter(DataSource.id == data_source_id).first()
@@ -274,6 +287,9 @@ async def upload_inventory(
         db.execute(inv_upsert_sql, inv_records)
         db.commit()
         snapshots = inv_records
+
+        # Run inventory analysis immediately with whatever sales/predictions are already in the DB (may produce "pending" if none exist yet)
+        run_inventory_analysis(company_id, db)
 
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -496,14 +512,19 @@ async def get_sales(
 )
 async def get_inventory(db: Session = Depends(get_db)):
     try:
-
-        snapshots = (
-            db.query(InventorySnapshot)
+        # LEFT JOIN: every snapshot row is returned even if analysis
+        # hasn't run yet (analysis columns will be None in that case)
+        results = (
+            db.query(InventorySnapshot, InventoryAnalysis)
+            .outerjoin(
+                InventoryAnalysis,
+                InventoryAnalysis.inventory_snapshot_id == InventorySnapshot.id,
+            )
             .order_by(InventorySnapshot.item_id)
             .all()
         )
 
-        if not snapshots:
+        if not results:
             raise HTTPException(status_code=404, detail="No inventory data found. Please upload an inventory file first.")
 
         return {
@@ -515,11 +536,16 @@ async def get_inventory(db: Session = Depends(get_db)):
                     "available_stock": s.inventory_available if s.inventory_available is not None else s.inventory_on_hand,
                     "lead_time_days": s.lead_time_days,
                     "unit_cost": float(s.unit_cost),
-                    "next_month_forecast": 0,    # Sprint 2
-                    "stock_status": "TBD",       # Sprint 2
                     "last_updated": s.date.isoformat(),
+                    # --- From inventory_analysis (None if analysis hasn't run yet) ---
+                    "stock_status": a.stock_status if a else "pending",
+                    "reorder_point": float(a.reorder_point) if a and a.reorder_point is not None else None,
+                    "next_month_forecast": float(a.units_needed_next_month) if a and a.units_needed_next_month is not None else 0,
+                    "slow_moving_flag": a.slow_moving_flag if a else None,
+                    "immobilized_capital": float(a.immobilized_capital) if a and a.immobilized_capital is not None else None,
+                    "days_of_stock": float(a.days_of_stock) if a and a.days_of_stock is not None else None,
                 }
-                for s in snapshots
+                for s, a in results
             ]
         }
 

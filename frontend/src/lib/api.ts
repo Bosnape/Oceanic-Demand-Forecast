@@ -61,7 +61,10 @@ export interface InventoryItem {
   next_month_forecast: number
   stock_status: string
   last_updated: string
-  reorder_point?: number
+  reorder_point: number | null
+  slow_moving_flag: boolean | null
+  immobilized_capital: number | null
+  days_of_stock: number | null
 }
 
 export interface InventoryResponse {
