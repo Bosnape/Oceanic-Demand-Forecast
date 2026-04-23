@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, DollarSign, Package, BarChart2, AlertTriangle
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { getSales, getSalesRange, getInventory, getPredictionsStatus } from "@/lib/api"
+import { getSales, getSalesRange, getInventory, getPredictionsStatus, getInventoryAlerts } from "@/lib/api"
 import { format, subMonths, startOfMonth, endOfMonth, parseISO } from "date-fns"
 
 interface KpiCardProps {
@@ -126,12 +126,13 @@ export function KpiCardsGrid() {
         const prevMonthStart = format(startOfMonth(subMonths(anchor, 1)), "yyyy-MM-dd")
         const prevMonthEnd = format(endOfMonth(subMonths(anchor, 1)), "yyyy-MM-dd")
 
-        const [salesThis, salesPrev, inventoryRes, statusRes] = await Promise.all([
-          getSales({ date_from: thisMonthStart, date_to: thisMonthEnd }),
-          getSales({ date_from: prevMonthStart, date_to: prevMonthEnd }),
-          getInventory(),
-          getPredictionsStatus(),
-        ])
+        const [salesThis, salesPrev, inventoryRes, statusRes, alertsRes] = await Promise.all([
+        getSales({ date_from: thisMonthStart, date_to: thisMonthEnd }),
+        getSales({ date_from: prevMonthStart, date_to: prevMonthEnd }),
+        getInventory(),
+        getPredictionsStatus(),
+        getInventoryAlerts().catch(() => ({ alerts: [] })),
+      ])
 
         // Ventas del mes (revenue = units_sold * sell_price)
         const revenueThis = salesThis.reduce((s, r) => s + r.units_sold * (r.sell_price ?? 0), 0)
@@ -143,10 +144,9 @@ export function KpiCardsGrid() {
         const totalStock = items.reduce((s, i) => s + i.current_stock, 0)
 
         // Alertas: only count known actionable statuses (not "TBD" which is Sprint 2 placeholder)
-        const knownStatuses = new Set(["critical", "low", "excess"])
-        const alertCount = items.filter((i) => knownStatuses.has(i.stock_status)).length
-        const criticalCount = items.filter((i) => i.stock_status === "critical").length
-        const allTbd = items.length > 0 && items.every((i) => i.stock_status === "TBD")
+        const alertCount = alertsRes.alerts.length
+        const criticalCount = alertsRes.alerts.filter((a) => a.stock_status === "critical").length
+        const allTbd = false
 
         // SKUs with predictions available
         const forecastedSkus = statusRes.status === "ready" ? items.length : 0
