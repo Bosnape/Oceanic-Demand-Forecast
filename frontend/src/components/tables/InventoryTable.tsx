@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, Fragment } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Search, AlertTriangle, TrendingDown, CheckCircle2, Skull, BarChart2, History, HelpCircle } from "lucide-react"
+import { Search, AlertTriangle, TrendingDown, CheckCircle2, Skull, BarChart2, History, HelpCircle, ChevronDown, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { InventoryItem, StockoutAlert, AlertMode } from "@/lib/api"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
@@ -166,6 +166,142 @@ function InventoryGuide() {
 }
 
 // ---------------------------------------------------------------------------
+// Analysis panel — expandable per-SKU breakdown
+// ---------------------------------------------------------------------------
+
+function AnalysisStep({
+  number, label, value, note, status, statusText,
+}: {
+  number: string
+  label: string
+  value: string
+  note?: string
+  status?: "good" | "bad" | "warning" | "neutral"
+  statusText?: string
+}) {
+  return (
+    <div className="space-y-0.5">
+      <p className="text-[10px] text-muted-foreground">{number} {label}</p>
+      <p className={cn(
+        "font-semibold text-sm",
+        status === "good"    ? "text-success"     :
+        status === "bad"     ? "text-destructive" :
+        status === "warning" ? "text-warning"     :
+        "text-foreground"
+      )}>
+        {value}
+      </p>
+      {note       && <p className="text-[10px] text-muted-foreground leading-tight">{note}</p>}
+      {statusText && (
+        <p className={cn(
+          "text-[10px] font-medium",
+          status === "good" ? "text-success" : status === "bad" ? "text-destructive" : "text-warning"
+        )}>
+          {statusText}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function AnalysisPanel({ item, isAlert }: { item: InventoryItem; isAlert: boolean }) {
+  const dailyForecast        = item.next_month_forecast > 0 ? item.next_month_forecast / 30 : 0
+  const demandDuringLeadTime = dailyForecast * item.lead_time_days
+  const historicalDailyRate  = (item.days_of_stock != null && item.days_of_stock > 0)
+    ? item.current_stock / item.days_of_stock
+    : null
+  const daysUntilReorder = (item.reorder_point != null && dailyForecast > 0)
+    ? (item.current_stock - item.reorder_point) / dailyForecast
+    : null
+
+  const isPending    = item.next_month_forecast === 0 || item.stock_status === "pending"
+  const isReorder    = isBelowReorder(item)
+  const isDeadOrSlow = item.stock_status === "dead_stock" || (item.slow_moving_flag === true && !isAlert && !isReorder)
+
+  // Conclusion text per scenario
+  const conclusion: { text: string; color: string } = isPending
+    ? { text: "Sin datos suficientes. Sube ventas e inventario para activar el análisis completo.", color: "text-muted-foreground" }
+    : isReorder
+    ? { text: `Situación crítica — el stock se agotará en ${item.days_of_stock?.toFixed(1) ?? "?"}d y el lead time es ${item.lead_time_days}d. Pide hoy.`, color: "text-destructive" }
+    : isAlert
+    ? { text: `Margen ajustado: solo ${Math.round(item.current_stock - demandDuringLeadTime)} uds sobre la demanda del lead time. Planea el pedido lo antes posible.`, color: "text-orange-500" }
+    : isDeadOrSlow
+    ? { text: `Exceso de inventario. El stock tardará ~${item.days_of_stock?.toFixed(0) ?? "?"}d en agotarse. Considera reducir futuras órdenes o hacer promociones.`, color: "text-warning" }
+    : daysUntilReorder != null && daysUntilReorder > 0
+    ? { text: `Estás bien. Según el forecast, en ~${Math.round(daysUntilReorder)} días el stock llegará al punto de reorden — planea el pedido para entonces.`, color: "text-success" }
+    : { text: "Stock suficiente. Sin acciones inmediatas necesarias.", color: "text-success" }
+
+  return (
+    <div className="px-4 pb-4 pt-3 bg-muted/20 border-t border-dashed text-xs space-y-3">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        Análisis — {item.item_id}{item.store_id ? ` · ${item.store_id}` : ""}
+      </p>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <AnalysisStep
+          number="①" label="Stock disponible"
+          value={`${item.current_stock.toLocaleString()} uds`}
+          status="neutral"
+        />
+        <AnalysisStep
+          number="②" label="Punto de reorden"
+          value={item.reorder_point != null ? `${Math.round(item.reorder_point).toLocaleString()} uds` : "Sin datos"}
+          status={item.reorder_point == null ? "neutral" : isReorder ? "bad" : "good"}
+          statusText={item.reorder_point == null ? undefined : isReorder ? "Por debajo — pide ahora" : "Por encima ✓"}
+        />
+        <AnalysisStep
+          number="③" label="Días stock (histórico)"
+          value={item.days_of_stock != null ? `${item.days_of_stock.toFixed(1)}d` : "-"}
+          note={historicalDailyRate != null ? `~${historicalDailyRate.toFixed(1)} uds/día (promedio histórico)` : undefined}
+          status={
+            item.days_of_stock == null ? "neutral" :
+            item.days_of_stock <= item.lead_time_days ? "bad" :
+            item.days_of_stock <= item.lead_time_days * 2 ? "warning" : "neutral"
+          }
+        />
+        <AnalysisStep
+          number="④" label="Forecast próximo mes"
+          value={dailyForecast > 0 ? `${item.next_month_forecast.toLocaleString("en-US", { maximumFractionDigits: 0 })} uds` : "Sin forecast"}
+          note={dailyForecast > 0 ? `${dailyForecast.toFixed(1)}/día → ${Math.ceil(demandDuringLeadTime)} uds en ${item.lead_time_days}d de lead time` : undefined}
+          status="neutral"
+        />
+        <AnalysisStep
+          number="⑤" label={`Stock vs lead time (${item.lead_time_days}d)`}
+          value={dailyForecast > 0 ? `${item.current_stock.toLocaleString()} vs ${Math.ceil(demandDuringLeadTime)} uds` : "Sin forecast"}
+          status={dailyForecast === 0 ? "neutral" : item.current_stock >= demandDuringLeadTime * 1.25 ? "good" : item.current_stock >= demandDuringLeadTime ? "warning" : "bad"}
+          statusText={
+            dailyForecast === 0 ? undefined :
+            item.current_stock >= demandDuringLeadTime * 1.25 ? "Cubre el lead time con margen ✓" :
+            item.current_stock >= demandDuringLeadTime ? "Cubre justo — sin colchón" :
+            "No alcanza para el lead time ✗"
+          }
+        />
+        <AnalysisStep
+          number="⑥" label="¿Cuándo reordenar?"
+          value={
+            isReorder                                              ? "¡Ahora mismo!" :
+            daysUntilReorder != null && daysUntilReorder <= 0     ? "Ya pasaste el punto" :
+            daysUntilReorder != null                               ? `En ~${Math.round(daysUntilReorder)} días` :
+            "Sin datos"
+          }
+          status={
+            isReorder                                              ? "bad"     :
+            daysUntilReorder != null && daysUntilReorder <= 0     ? "bad"     :
+            daysUntilReorder != null && daysUntilReorder <= 7     ? "bad"     :
+            daysUntilReorder != null && daysUntilReorder <= 14    ? "warning" :
+            "good"
+          }
+        />
+      </div>
+
+      <div className={cn("rounded-md px-3 py-2 bg-muted/50 font-medium leading-relaxed", conclusion.color)}>
+        💡 {conclusion.text}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Filter tabs
 // ---------------------------------------------------------------------------
 
@@ -232,8 +368,13 @@ interface InventoryTableProps {
 }
 
 export function InventoryTable({ items, alerts = [], alertMode }: InventoryTableProps) {
-  const [search, setSearch]   = useState("")
-  const [filter, setFilter]   = useState<FilterType>("all")
+  const [search, setSearch]     = useState("")
+  const [filter, setFilter]     = useState<FilterType>("all")
+  const [expandedRow, setExpandedRow] = useState<string | null>(null)
+
+  function toggleRow(key: string) {
+    setExpandedRow((prev) => (prev === key ? null : key))
+  }
 
   const alertItemIds = new Set(alerts.map((a) => a.item_id))
 
@@ -347,82 +488,104 @@ export function InventoryTable({ items, alerts = [], alertMode }: InventoryTable
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.map((item) => (
-                  <TableRow
-                    key={`${item.item_id}-${item.store_id}`}
-                    className={cn(
-                      "transition-colors",
-                      isBelowReorder(item)
-                        ? "border-l-2 border-l-destructive bg-destructive/5 hover:bg-destructive/10"
-                        : item.stock_status === "dead_stock"
-                        ? "border-l-2 border-l-destructive/50 bg-destructive/5 hover:bg-destructive/10"
-                        : alertItemIds.has(item.item_id)
-                        ? "border-l-2 border-l-orange-500 bg-orange-500/5 hover:bg-orange-500/10"
-                        : item.slow_moving_flag === true
-                        ? "border-l-2 border-l-warning bg-warning/5 hover:bg-warning/10"
-                        : "hover:bg-muted/40"
-                    )}
-                  >
-                    {/* SKU */}
-                    <TableCell className="font-medium text-card-foreground">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-sm">{item.item_id}</span>
-                        {item.immobilized_capital != null && (
-                          <span className="text-[10px] font-semibold text-warning">
-                            ${item.immobilized_capital.toLocaleString("en-US", { maximumFractionDigits: 0 })} inmovilizado
-                          </span>
+                filtered.map((item) => {
+                  const rowKey     = `${item.item_id}-${item.store_id}`
+                  const isExpanded = expandedRow === rowKey
+                  const isAlert    = alertItemIds.has(item.item_id)
+                  return (
+                    <Fragment key={rowKey}>
+                      <TableRow
+                        onClick={() => toggleRow(rowKey)}
+                        className={cn(
+                          "cursor-pointer transition-colors",
+                          isBelowReorder(item)
+                            ? "border-l-2 border-l-destructive bg-destructive/5 hover:bg-destructive/10"
+                            : item.stock_status === "dead_stock"
+                            ? "border-l-2 border-l-destructive/50 bg-destructive/5 hover:bg-destructive/10"
+                            : isAlert
+                            ? "border-l-2 border-l-orange-500 bg-orange-500/5 hover:bg-orange-500/10"
+                            : item.slow_moving_flag === true
+                            ? "border-l-2 border-l-warning bg-warning/5 hover:bg-warning/10"
+                            : "hover:bg-muted/40"
                         )}
-                      </div>
-                    </TableCell>
+                      >
+                        {/* SKU */}
+                        <TableCell className="font-medium text-card-foreground">
+                          <div className="flex items-center gap-1.5">
+                            {isExpanded
+                              ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            }
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-sm">{item.item_id}</span>
+                              {item.immobilized_capital != null && (
+                                <span className="text-[10px] font-semibold text-warning">
+                                  ${item.immobilized_capital.toLocaleString("en-US", { maximumFractionDigits: 0 })} inmovilizado
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
 
-                    {/* Tienda */}
-                    <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">
-                      {item.store_id ?? "-"}
-                    </TableCell>
+                        {/* Tienda */}
+                        <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">
+                          {item.store_id ?? "-"}
+                        </TableCell>
 
-                    {/* Stock */}
-                    <TableCell className="text-right font-bold text-card-foreground">
-                      {item.current_stock.toLocaleString()}
-                    </TableCell>
+                        {/* Stock */}
+                        <TableCell className="text-right font-bold text-card-foreground">
+                          {item.current_stock.toLocaleString()}
+                        </TableCell>
 
-                    {/* Disponible */}
-                    <TableCell className="text-right text-muted-foreground hidden md:table-cell">
-                      {item.available_stock.toLocaleString()}
-                    </TableCell>
+                        {/* Disponible */}
+                        <TableCell className="text-right text-muted-foreground hidden md:table-cell">
+                          {item.available_stock.toLocaleString()}
+                        </TableCell>
 
-                    {/* Punto de reorden */}
-                    <TableCell className="text-right hidden lg:table-cell">
-                      <ReorderCell item={item} />
-                    </TableCell>
+                        {/* Punto de reorden */}
+                        <TableCell className="text-right hidden lg:table-cell">
+                          <ReorderCell item={item} />
+                        </TableCell>
 
-                    {/* Días de stock */}
-                    <TableCell className="text-right hidden lg:table-cell">
-                      <DaysOfStockCell days={item.days_of_stock} />
-                    </TableCell>
+                        {/* Días de stock */}
+                        <TableCell className="text-right hidden lg:table-cell">
+                          <DaysOfStockCell days={item.days_of_stock} />
+                        </TableCell>
 
-                    {/* Pronóstico próximo mes */}
-                    <TableCell className="text-right text-muted-foreground hidden xl:table-cell">
-                      {item.next_month_forecast > 0
-                        ? item.next_month_forecast.toLocaleString("en-US", { maximumFractionDigits: 0 })
-                        : "-"}
-                    </TableCell>
+                        {/* Pronóstico próximo mes */}
+                        <TableCell className="text-right text-muted-foreground hidden xl:table-cell">
+                          {item.next_month_forecast > 0
+                            ? item.next_month_forecast.toLocaleString("en-US", { maximumFractionDigits: 0 })
+                            : "-"}
+                        </TableCell>
 
-                    {/* Lead time */}
-                    <TableCell className="text-right text-muted-foreground hidden xl:table-cell">
-                      {item.lead_time_days}d
-                    </TableCell>
+                        {/* Lead time */}
+                        <TableCell className="text-right text-muted-foreground hidden xl:table-cell">
+                          {item.lead_time_days}d
+                        </TableCell>
 
-                    {/* Costo unitario */}
-                    <TableCell className="text-right text-muted-foreground hidden xl:table-cell">
-                      ${item.unit_cost.toFixed(2)}
-                    </TableCell>
+                        {/* Costo unitario */}
+                        <TableCell className="text-right text-muted-foreground hidden xl:table-cell">
+                          ${item.unit_cost.toFixed(2)}
+                        </TableCell>
 
-                    {/* Estado */}
-                    <TableCell>
-                      <StockStatusBadge item={item} isAlert={alertItemIds.has(item.item_id)} />
-                    </TableCell>
-                  </TableRow>
-                ))
+                        {/* Estado */}
+                        <TableCell>
+                          <StockStatusBadge item={item} isAlert={isAlert} />
+                        </TableCell>
+                      </TableRow>
+
+                      {/* Expandable analysis panel */}
+                      {isExpanded && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={10} className="p-0">
+                            <AnalysisPanel item={item} isAlert={isAlert} />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  )
+                })
               )}
             </TableBody>
           </Table>
