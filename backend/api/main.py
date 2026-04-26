@@ -15,7 +15,7 @@ from api.validation import validate_sales_dataframe, validate_inventory_datafram
 from demand_forecast.prophet_demand_forecast import run_pipeline
 
 from database.database import get_db, SessionLocal, init_db
-from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot, InventoryAnalysis
+from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot, InventoryAnalysis, ModelMetrics
 from inventory.inventory_analysis import run_inventory_analysis
 
 
@@ -421,6 +421,71 @@ async def get_predictions(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching predictions: {e}")
+
+# =============================================================================
+# GET /api/predictions/metrics
+# =============================================================================
+
+@app.get(
+    "/api/predictions/metrics",
+    tags=["Predictions"],
+    summary="Get Prophet model accuracy metrics",
+    description="Returns aggregate and per-SKU accuracy metrics (MAE, RMSE, MAPE, CI coverage, bias) from the last Prophet training run.",
+)
+async def get_model_metrics(db: Session = Depends(get_db)):
+    try:
+        data_source = (
+            db.query(DataSource)
+            .order_by(DataSource.upload_date.desc())
+            .first()
+        )
+        if not data_source:
+            raise HTTPException(status_code=404, detail="No data uploaded yet.")
+        if data_source.status != "ready":
+            raise HTTPException(status_code=404, detail="Metrics not available yet — pipeline has not completed.")
+
+        company_id = data_source.company_id
+
+        aggregate = (
+            db.query(ModelMetrics)
+            .filter(ModelMetrics.company_id == company_id, ModelMetrics.item_id.is_(None))
+            .order_by(ModelMetrics.created_at.desc())
+            .first()
+        )
+        per_sku = (
+            db.query(ModelMetrics)
+            .filter(ModelMetrics.company_id == company_id, ModelMetrics.item_id.isnot(None))
+            .order_by(ModelMetrics.mape.asc())
+            .all()
+        )
+
+        if not aggregate and not per_sku:
+            raise HTTPException(status_code=404, detail="No metrics computed yet. Re-upload the sales file to trigger training.")
+
+        def _fmt(m):
+            return {
+                "item_id": m.item_id,
+                "mae":          float(m.mae)          if m.mae          is not None else None,
+                "rmse":         float(m.rmse)         if m.rmse         is not None else None,
+                "mape":         float(m.mape)         if m.mape         is not None else None,
+                "coverage_ic":  float(m.coverage_ic)  if m.coverage_ic  is not None else None,
+                "bias":         float(m.bias)         if m.bias         is not None else None,
+                "training_samples":   m.training_samples,
+                "validation_samples": m.validation_samples,
+                "seasonality_mode":   m.seasonality_mode,
+                "last_updated": m.created_at.isoformat() if m.created_at else None,
+            }
+
+        return {
+            "aggregate": _fmt(aggregate) if aggregate else None,
+            "per_sku":   [_fmt(m) for m in per_sku],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching metrics: {e}")
+
 
 # =============================================================================
 # GET /api/sales/range
