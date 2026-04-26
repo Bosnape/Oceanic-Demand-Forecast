@@ -5,21 +5,28 @@ import axios from "axios"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { InventoryTable } from "@/components/tables/InventoryTable"
 import { Skeleton } from "@/components/ui/skeleton"
-import { getInventory, type InventoryItem } from "@/lib/api"
+import { getInventory, getInventoryAlerts, type InventoryItem, type StockoutAlert, type AlertMode } from "@/lib/api"
 import { PackageX, ShoppingCart, TrendingDown, DollarSign } from "lucide-react"
 
 type LoadState = "loading" | "ready" | "empty" | "error"
 
 export default function InventoryPage() {
-  const [items, setItems] = useState<InventoryItem[]>([])
-  const [state, setState] = useState<LoadState>("loading")
-  const [errorMsg, setErrorMsg] = useState("")
+  const [items, setItems]         = useState<InventoryItem[]>([])
+  const [alerts, setAlerts]       = useState<StockoutAlert[]>([])
+  const [alertMode, setAlertMode] = useState<AlertMode>("no_data")
+  const [state, setState]         = useState<LoadState>("loading")
+  const [errorMsg, setErrorMsg]   = useState("")
 
   useEffect(() => {
-    getInventory()
-      .then((data) => {
-        setItems(data.items)
-        setState(data.items.length === 0 ? "empty" : "ready")
+    Promise.all([
+      getInventory(),
+      getInventoryAlerts().catch(() => ({ alerts: [], alert_mode: "no_data" as AlertMode, message: "" })),
+    ])
+      .then(([invData, alertData]) => {
+        setItems(invData.items)
+        setAlerts(alertData.alerts)
+        setAlertMode(alertData.alert_mode)
+        setState(invData.items.length === 0 ? "empty" : "ready")
       })
       .catch((err) => {
         if (axios.isAxiosError(err) && err.response?.status === 404) {
@@ -103,9 +110,9 @@ export default function InventoryPage() {
               }
               sub="en inventario sin rotación"
               icon={<DollarSign className="h-5 w-5" />}
-              iconColor={totalImmobilized > 0 ? "text-warning" : "text-muted-foreground"}
-              iconBg={totalImmobilized > 0 ? "bg-warning/10" : "bg-muted"}
-              highlight={totalImmobilized > 0 ? "warning" : undefined}
+              iconColor={totalImmobilized > 0 ? "text-violet-500" : "text-muted-foreground"}
+              iconBg={totalImmobilized > 0 ? "bg-violet-500/10" : "bg-muted"}
+              highlight={totalImmobilized > 0 ? "violet" : undefined}
             />
           </>
         )}
@@ -120,7 +127,7 @@ export default function InventoryPage() {
             ))}
           </div>
         )}
-        {state === "ready" && <InventoryTable items={items} />}
+        {state === "ready" && <InventoryTable items={items} alerts={alerts} alertMode={alertMode} />}
         {state === "empty" && (
           <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
             <p className="text-muted-foreground">No hay datos de inventario disponibles.</p>
@@ -139,6 +146,7 @@ export default function InventoryPage() {
           </div>
         )}
       </section>
+
     </DashboardLayout>
   )
 }
@@ -158,7 +166,7 @@ function StatCard({
   icon: React.ReactNode
   iconColor: string
   iconBg: string
-  highlight?: "destructive" | "warning"
+  highlight?: "destructive" | "warning" | "violet"
 }) {
   return (
     <div className="rounded-xl border bg-card p-5 shadow-sm">
@@ -174,6 +182,8 @@ function StatCard({
             ? "mt-2 text-2xl font-bold text-destructive"
             : highlight === "warning"
             ? "mt-2 text-2xl font-bold text-warning"
+            : highlight === "violet"
+            ? "mt-2 text-2xl font-bold text-violet-500"
             : "mt-2 text-2xl font-bold tracking-tight text-card-foreground"
         }
       >
