@@ -92,3 +92,26 @@ class InventoryAnalysis(Base):
     stock_status = Column(String(20))  # ok / low / critical
 
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class ModelMetrics(Base):
+    """Per-SKU and aggregate accuracy metrics computed after each Prophet training run."""
+    __tablename__ = "model_metrics"
+
+    id         = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("company.id"))
+    item_id    = Column(String(100), nullable=True)    # NULL → aggregate row
+
+    # Core accuracy metrics
+    mae         = Column(Numeric(12, 4))               # Mean Absolute Error (units/day)
+    rmse        = Column(Numeric(12, 4))               # Root Mean Squared Error (units/day)
+    mape        = Column(Numeric(8, 2))                # Mean Absolute Percentage Error (%)
+    coverage_ic = Column(Numeric(8, 2))                # % of actuals inside confidence interval
+    bias        = Column(Numeric(12, 4))               # avg(predicted − actual); + = overforecast
+
+    # Training context
+    training_samples   = Column(Integer)               # rows used for training
+    validation_samples = Column(Integer)               # rows used for validation window
+    seasonality_mode   = Column(String(20))            # 'additive' | 'multiplicative'
+
+    created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))

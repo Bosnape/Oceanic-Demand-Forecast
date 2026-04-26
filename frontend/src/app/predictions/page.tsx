@@ -15,7 +15,7 @@ import {
 } from "recharts"
 import { format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
-import { Brain, TrendingUp, TrendingDown, Minus, Calendar, Package, BarChart3, ChevronRight, Layers, ScanBarcode } from "lucide-react"
+import { Brain, TrendingUp, TrendingDown, Minus, Calendar, Package, BarChart3, ChevronRight, Layers, ScanBarcode, HelpCircle, AlertTriangle, CheckCircle2, Info } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -44,12 +44,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { cn } from "@/lib/utils"
 import {
   getSales,
   getPredictions,
   getPredictionsStatus,
+  getModelMetrics,
   type SaleRecord,
   type PredictionRecord,
+  type ModelMetricsResponse,
 } from "@/lib/api"
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -220,6 +224,86 @@ function TrendIcon({ trend }: { trend: "up" | "down" | "flat" }) {
 }
 
 
+// ─── metrics modal helpers ────────────────────────────────────────────────────
+
+/** Returns color tier for a MAPE value — industry-agnostic thresholds. */
+function getMapeQuality(mape: number | null): {
+  label: string; textColor: string; bgColor: string; borderColor: string
+} {
+  if (mape === null) return { label: "Sin datos", textColor: "text-muted-foreground", bgColor: "bg-muted/50", borderColor: "border-border" }
+  if (mape < 15)    return { label: "Excelente",           textColor: "text-success",     bgColor: "bg-success/8",     borderColor: "border-success/30" }
+  if (mape < 30)    return { label: "Bueno",               textColor: "text-primary",     bgColor: "bg-primary/8",     borderColor: "border-primary/30" }
+  if (mape < 50)    return { label: "Moderado",            textColor: "text-warning",     bgColor: "bg-warning/8",     borderColor: "border-warning/30" }
+  return                   { label: "Alta incertidumbre",  textColor: "text-destructive", bgColor: "bg-destructive/8", borderColor: "border-destructive/30" }
+}
+
+function MetricCard({
+  label, value, tooltip, mape,
+}: {
+  label: string; value: string; tooltip: string; mape?: number | null
+}) {
+  const q = mape !== undefined ? getMapeQuality(mape) : null
+  return (
+    <HoverCard openDelay={200} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <div className={cn(
+          "rounded-lg border p-3 text-center cursor-help transition-colors",
+          q ? `${q.bgColor} ${q.borderColor}` : "border-border"
+        )}>
+          <p className="text-[11px] text-muted-foreground mb-1 flex items-center justify-center gap-1">
+            {label}
+            <HelpCircle className="h-3 w-3 shrink-0" />
+          </p>
+          <p className={cn("text-lg font-bold", q ? q.textColor : "text-foreground")}>{value}</p>
+          {q && mape !== null && (
+            <p className={cn("text-[10px] font-medium mt-0.5", q.textColor)}>{q.label}</p>
+          )}
+        </div>
+      </HoverCardTrigger>
+      <HoverCardContent align="center" className="w-72 text-xs leading-relaxed p-3">
+        {tooltip}
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
+function ReliabilityBanner({ perSku }: { perSku: ModelMetricsResponse["per_sku"] }) {
+  if (perSku.length === 0) return null
+  const reliable = perSku.filter((s) => s.mape !== null && s.mape < 30).length
+  const total    = perSku.length
+  const pct      = Math.round((reliable / total) * 100)
+  const isHigh   = pct >= 80
+  const isMid    = pct >= 60
+
+  return (
+    <div className={cn(
+      "flex items-start gap-3 rounded-lg border px-4 py-3",
+      isHigh ? "bg-success/8 border-success/30" : isMid ? "bg-primary/8 border-primary/30" : "bg-warning/8 border-warning/30"
+    )}>
+      {isHigh
+        ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success mt-0.5" />
+        : isMid
+        ? <Info className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+        : <AlertTriangle className="h-4 w-4 shrink-0 text-warning mt-0.5" />
+      }
+      <div className="text-xs">
+        <p className={cn("font-semibold", isHigh ? "text-success" : isMid ? "text-primary" : "text-warning")}>
+          {isHigh ? "Alta fiabilidad" : isMid ? "Fiabilidad moderada" : "Fiabilidad baja"}
+          {" "}— {reliable} de {total} SKUs con MAPE &lt; 30%
+        </p>
+        <p className="text-muted-foreground mt-0.5">
+          {isHigh
+            ? "El modelo es confiable para la mayoría de productos. Adecuado para decisiones de inventario y compras."
+            : isMid
+            ? "Algunos SKUs tienen alta variabilidad. Revisa los productos con MAPE > 30% antes de usarlos en planificación crítica."
+            : "Varios SKUs tienen alta incertidumbre. Considera acumular más datos históricos o revisar la estacionalidad del negocio."
+          }
+        </p>
+      </div>
+    </div>
+  )
+}
+
 // ─── page ─────────────────────────────────────────────────────────────────────
 
 export default function PredictionsPage() {
@@ -232,6 +316,11 @@ export default function PredictionsPage() {
   const [granularity, setGranularity] = useState<Granularity>("daily")
   const [errorMsg, setErrorMsg] = useState("")
   const [refreshKey, setRefreshKey] = useState(0)
+
+  // Metrics dialog
+  const [metricsOpen, setMetricsOpen]       = useState(false)
+  const [metricsData, setMetricsData]       = useState<ModelMetricsResponse | null>(null)
+  const [metricsLoading, setMetricsLoading] = useState(false)
 
   // Re-load when the pipeline completes a new run
   useEffect(() => {
@@ -271,6 +360,23 @@ export default function PredictionsPage() {
       .then(setAllSales)
       .catch(() => setAllSales([]))
   }, [pageState, skus])
+
+  // Fetch metrics lazily when dialog opens (reset on new pipeline run)
+  useEffect(() => {
+    if (!metricsOpen || metricsData !== null) return
+    setMetricsLoading(true)
+    getModelMetrics()
+      .then(setMetricsData)
+      .catch(() => {})
+      .finally(() => setMetricsLoading(false))
+  }, [metricsOpen, metricsData])
+
+  // Reset cached metrics when a new pipeline run completes
+  useEffect(() => {
+    const handler = () => setMetricsData(null)
+    window.addEventListener("pipeline:dataready", handler)
+    return () => window.removeEventListener("pipeline:dataready", handler)
+  }, [])
 
   // Chart data — always show full 90-day forecast
   const chartData = useMemo((): ChartPoint[] => {
@@ -403,7 +509,7 @@ export default function PredictionsPage() {
             </div>
 
             {/* Model metrics dialog */}
-            <Dialog>
+            <Dialog open={metricsOpen} onOpenChange={setMetricsOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" className="gap-2">
                   <Brain className="h-4 w-4" />
@@ -417,75 +523,169 @@ export default function PredictionsPage() {
                     Métricas del Modelo Prophet
                   </DialogTitle>
                   <DialogDescription>
-                    Rendimiento del modelo en datos de validación y configuración de entrenamiento
+                    Rendimiento sobre el período de validación (últimos ~20% de datos históricos)
                   </DialogDescription>
                 </DialogHeader>
-                <div className="flex flex-col gap-6 pt-4">
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground mb-3">Métricas Generales</h4>
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-                      {[
-                        { label: "MAE" },
-                        { label: "RMSE" },
-                        { label: "MAPE" },
-                        { label: "Cobertura IC" },
-                        { label: "Sesgo" },
-                      ].map(({ label }) => (
-                        <div key={label} className="rounded-lg border border-border p-3 text-center">
-                          <p className="text-xs text-muted-foreground">{label}</p>
-                          <p className="text-lg font-bold text-foreground">—</p>
-                        </div>
-                      ))}
+
+                {/* Loading skeleton */}
+                {metricsLoading && (
+                  <div className="flex flex-col gap-4 pt-4">
+                    <Skeleton className="h-14 rounded-lg" />
+                    <div className="grid grid-cols-5 gap-3">
+                      {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)}
                     </div>
+                    <Skeleton className="h-24 rounded-lg" />
+                    <Skeleton className="h-48 rounded-lg" />
                   </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground mb-3">Información de Entrenamiento</h4>
-                    <div className="rounded-lg border border-border p-4">
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        {[
-                          "Último entrenamiento",
-                          "Muestras entrenamiento",
-                          "Muestras validación",
-                          "Changepoints detectados",
-                          "Estacionalidad",
-                          "Festivos",
-                        ].map((label) => (
-                          <div key={label}>
-                            <p className="text-muted-foreground">{label}</p>
-                            <p className="font-medium text-foreground">—</p>
-                          </div>
-                        ))}
+                )}
+
+                {/* No metrics yet */}
+                {!metricsLoading && !metricsData && (
+                  <div className="py-10 text-center text-sm text-muted-foreground">
+                    Las métricas se generan automáticamente al completar el entrenamiento del modelo.
+                    <br />Sube un archivo de ventas para activarlas.
+                  </div>
+                )}
+
+                {/* Metrics loaded */}
+                {!metricsLoading && metricsData && (
+                  <div className="flex flex-col gap-5 pt-4">
+
+                    {/* Reliability banner */}
+                    <ReliabilityBanner perSku={metricsData.per_sku} />
+
+                    {/* Aggregate metric cards */}
+                    <div>
+                      <h4 className="text-sm font-semibold text-foreground mb-3">Métricas Agregadas</h4>
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                        <MetricCard
+                          label="MAE"
+                          value={metricsData.aggregate?.mae != null ? metricsData.aggregate.mae.toFixed(2) : "—"}
+                          tooltip="Error Absoluto Medio en unidades/día. Si MAE = 5, el modelo se equivoca en promedio 5 unidades por día. No penaliza errores grandes más que pequeños. Útil para comunicar el error al negocio en términos concretos."
+                        />
+                        <MetricCard
+                          label="RMSE"
+                          value={metricsData.aggregate?.rmse != null ? metricsData.aggregate.rmse.toFixed(2) : "—"}
+                          tooltip="Raíz del Error Cuadrático Medio. Penaliza más los errores grandes. Si RMSE es notablemente mayor que MAE, hay días con errores muy altos — señal de que el modelo falla en picos de demanda."
+                        />
+                        <MetricCard
+                          label="MAPE"
+                          value={metricsData.aggregate?.mape != null ? `${metricsData.aggregate.mape.toFixed(1)}%` : "—"}
+                          mape={metricsData.aggregate?.mape ?? null}
+                          tooltip="Error Porcentual Absoluto Medio. El número más intuitivo: un MAPE del 20% significa que el modelo se equivoca ~20% arriba o abajo. Los umbrales varían por industria: <15% excelente, 15-30% bueno, 30-50% aceptable para productos volátiles o con pocos datos históricos."
+                        />
+                        <MetricCard
+                          label="Cobertura IC"
+                          value={metricsData.aggregate?.coverage_ic != null ? `${metricsData.aggregate.coverage_ic.toFixed(1)}%` : "—"}
+                          tooltip="Porcentaje de días reales que caen dentro del intervalo de confianza del modelo. Prophet usa un IC del 80% por defecto, por lo que ~80% es el valor esperado. Un valor muy inferior indica que el modelo subestima la incertidumbre."
+                        />
+                        <MetricCard
+                          label="Sesgo"
+                          value={metricsData.aggregate?.bias != null
+                            ? `${metricsData.aggregate.bias >= 0 ? "+" : ""}${metricsData.aggregate.bias.toFixed(2)}`
+                            : "—"}
+                          tooltip="Tendencia sistemática del modelo. Valor positivo significa que el modelo sobreestima la demanda en promedio; negativo que la subestima. Un sesgo cercano a 0 es ideal. Un sesgo positivo alto genera exceso de inventario; uno negativo, quiebres de stock."
+                        />
                       </div>
                     </div>
+
+                    {/* Training info */}
+                    {metricsData.aggregate && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground mb-3">Información de Entrenamiento</h4>
+                        <div className="rounded-lg border border-border bg-muted/20 p-4">
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+                            <div>
+                              <p className="text-xs text-muted-foreground">Último entrenamiento</p>
+                              <p className="font-medium text-foreground">
+                                {metricsData.aggregate.last_updated
+                                  ? new Date(metricsData.aggregate.last_updated).toLocaleString("es-CO", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })
+                                  : "—"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">SKUs modelados</p>
+                              <p className="font-medium text-foreground">{metricsData.per_sku.length}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Modo estacionalidad</p>
+                              <p className="font-medium text-foreground capitalize">{metricsData.aggregate.seasonality_mode ?? "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Muestras entrenamiento</p>
+                              <p className="font-medium text-foreground">{metricsData.aggregate.training_samples?.toLocaleString() ?? "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Muestras validación</p>
+                              <p className="font-medium text-foreground">{metricsData.aggregate.validation_samples?.toLocaleString() ?? "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Horizonte forecast</p>
+                              <p className="font-medium text-foreground">90 días</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Per-SKU table */}
+                    {metricsData.per_sku.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground mb-1">Métricas por SKU</h4>
+                        <p className="text-xs text-muted-foreground mb-3">Ordenado de mejor a peor MAPE. Haz hover sobre los encabezados para ver las definiciones.</p>
+                        <div className="rounded-md border border-border overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="border-border hover:bg-transparent">
+                                <TableHead className="text-muted-foreground">SKU</TableHead>
+                                <TableHead className="text-muted-foreground text-right">MAE</TableHead>
+                                <TableHead className="text-muted-foreground text-right">RMSE</TableHead>
+                                <TableHead className="text-muted-foreground text-right">MAPE</TableHead>
+                                <TableHead className="text-muted-foreground text-right hidden sm:table-cell">Cobertura IC</TableHead>
+                                <TableHead className="text-muted-foreground text-center">Estado</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {metricsData.per_sku.map((sku) => {
+                                const q = getMapeQuality(sku.mape)
+                                return (
+                                  <TableRow key={sku.item_id} className="border-border">
+                                    <TableCell className="font-medium text-foreground text-sm">{sku.item_id}</TableCell>
+                                    <TableCell className="text-right font-mono text-sm text-foreground">
+                                      {sku.mae != null ? sku.mae.toFixed(2) : "—"}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono text-sm text-foreground">
+                                      {sku.rmse != null ? sku.rmse.toFixed(2) : "—"}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      <span className={cn("font-mono font-semibold text-sm", q.textColor)}>
+                                        {sku.mape != null ? `${sku.mape.toFixed(1)}%` : "—"}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono text-sm text-muted-foreground hidden sm:table-cell">
+                                      {sku.coverage_ic != null ? `${sku.coverage_ic.toFixed(1)}%` : "—"}
+                                    </TableCell>
+                                    <TableCell className="text-center">
+                                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full", q.bgColor, q.borderColor, q.textColor, "border")}>
+                                        {q.label}
+                                      </span>
+                                    </TableCell>
+                                  </TableRow>
+                                )
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Footnote */}
+                    <p className="text-[11px] text-muted-foreground leading-relaxed border-t border-border pt-3">
+                      ⚠ Estas métricas corresponden al <strong>ajuste sobre el período de validación</strong> (últimos ~20% de datos históricos). Al ser in-sample, pueden ser ligeramente optimistas. Para un análisis más riguroso, ejecuta validación cruzada temporal sobre el dataset completo.
+                    </p>
+
                   </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground mb-3">Métricas por SKU</h4>
-                    <div className="rounded-md border border-border overflow-hidden">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="border-border hover:bg-transparent">
-                            <TableHead className="text-muted-foreground">SKU</TableHead>
-                            <TableHead className="text-muted-foreground text-right">MAE</TableHead>
-                            <TableHead className="text-muted-foreground text-right">RMSE</TableHead>
-                            <TableHead className="text-muted-foreground text-right">MAPE</TableHead>
-                            <TableHead className="text-muted-foreground text-right">Cobertura</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {skus.map((skuId) => (
-                            <TableRow key={skuId} className="border-border">
-                              <TableCell className="font-medium text-foreground text-sm">{skuId}</TableCell>
-                              <TableCell className="text-right font-mono text-foreground">—</TableCell>
-                              <TableCell className="text-right font-mono text-foreground">—</TableCell>
-                              <TableCell className="text-right font-mono text-foreground">—</TableCell>
-                              <TableCell className="text-right font-mono text-foreground">—</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                </div>
+                )}
               </DialogContent>
             </Dialog>
           </div>
