@@ -3,11 +3,17 @@
 import { Bell } from "lucide-react"
 
 interface NotificationBellProps {
+  /** Shows a pulsing dot for pipeline status (processing / failed) */
   hasActiveNotification: boolean
+  /** Shows a numeric badge for inventory stockout alerts */
+  inventoryAlertCount?: number
   onClick: () => void
 }
 
-export function NotificationBell({ hasActiveNotification, onClick }: NotificationBellProps) {
+export function NotificationBell({ hasActiveNotification, inventoryAlertCount = 0, onClick }: NotificationBellProps) {
+  const showCount  = inventoryAlertCount > 0
+  const showDot    = !showCount && hasActiveNotification
+
   return (
     <button
       onClick={onClick}
@@ -15,9 +21,19 @@ export function NotificationBell({ hasActiveNotification, onClick }: Notificatio
       className="relative flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
     >
       <Bell className="h-4 w-4" />
-      {hasActiveNotification && (
+
+      {/* Numeric badge — inventory stockout alerts */}
+      {showCount && (
+        <span className="absolute -top-0.5 -right-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold leading-none text-white">
+          {inventoryAlertCount > 9 ? "9+" : inventoryAlertCount}
+        </span>
+      )}
+
+      {/* Dot — pipeline activity only */}
+      {showDot && (
         <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-destructive" />
       )}
+
       <span className="sr-only">Notificaciones</span>
     </button>
   )
