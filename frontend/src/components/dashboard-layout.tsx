@@ -6,7 +6,71 @@ import { useEffect, useRef, useState, useCallback, type ReactNode } from "react"
 import { AppSidebar } from "@/components/app-sidebar"
 import { NotificationBell } from "@/components/notification-bell"
 import { PipelineToast } from "@/components/pipeline-toast"
-import { getPredictionsStatus, type PredictionsStatus } from "@/lib/api"
+import { getPredictionsStatus, getInventoryAlerts, type PredictionsStatus } from "@/lib/api"
+import { AlertTriangle, X } from "lucide-react"
+import { Card, CardContent } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
+
+// ---------------------------------------------------------------------------
+// Inventory alert toast — shown globally on every page via DashboardLayout
+// ---------------------------------------------------------------------------
+function InventoryAlertToast({
+  criticalCount,
+  totalCount,
+  visible,
+  abovePipeline,
+  onDismiss,
+}: {
+  criticalCount: number
+  totalCount: number
+  visible: boolean
+  abovePipeline: boolean
+  onDismiss: () => void
+}) {
+  if (!visible || totalCount === 0) return null
+  return (
+    <div
+      className={cn(
+        "fixed right-4 z-50 pointer-events-none transition-all duration-300",
+        abovePipeline ? "bottom-24" : "bottom-4",
+      )}
+    >
+      <Card className="w-80 shadow-lg border-destructive/30 pointer-events-auto py-0 animate-in slide-in-from-bottom-4 fade-in duration-300">
+        <CardContent className="px-4 py-3">
+          <div className="flex items-start gap-3">
+            <div className="shrink-0 mt-0.5">
+              <AlertTriangle
+                className={cn("h-5 w-5", criticalCount > 0 ? "text-destructive" : "text-orange-500")}
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">
+                {criticalCount > 0
+                  ? `${criticalCount} SKU${criticalCount > 1 ? "s" : ""} en riesgo crítico de stockout`
+                  : `${totalCount} SKU${totalCount > 1 ? "s" : ""} con riesgo de stockout`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {criticalCount > 0 && totalCount > criticalCount
+                  ? `+${totalCount - criticalCount} en atención · `
+                  : ""}
+                Revisa{" "}
+                <a href="/inventory" className="font-medium text-foreground underline underline-offset-2">
+                  Inventario → Riesgo Stockout
+                </a>
+              </p>
+            </div>
+            <button
+              onClick={onDismiss}
+              className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
 
 interface DashboardLayoutProps {
   children: ReactNode
@@ -31,8 +95,40 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const autoDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Inventory alert notification state
+  const [invAlertTotal, setInvAlertTotal]       = useState(0)
+  const [invAlertCritical, setInvAlertCritical] = useState(0)
+  const [invToastVisible, setInvToastVisible]   = useState(false)
+  const [invToastDismissed, setInvToastDismissed] = useState(false)
+  const invAutoDismissRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const invProgressiveRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Ref-mirror so fetchInventoryAlerts closure doesn't go stale
+  const invDismissedRef = useRef(false)
+
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+  }, [])
+
+  // ------------------------------------------------------------------
+  // Inventory alert fetch — runs on mount and on pipeline:dataready
+  // ------------------------------------------------------------------
+  const fetchInventoryAlerts = useCallback(async () => {
+    try {
+      const data = await getInventoryAlerts()
+      const total    = data.alerts.length
+      const critical = data.alerts.filter((a) => a.stock_status === "critical").length
+      setInvAlertTotal(total)
+      setInvAlertCritical(critical)
+
+      if (total > 0 && !invDismissedRef.current) {
+        setInvToastVisible(true)
+        // Auto-dismiss after 15 s
+        if (invAutoDismissRef.current) clearTimeout(invAutoDismissRef.current)
+        invAutoDismissRef.current = setTimeout(() => setInvToastVisible(false), 15000)
+      }
+    } catch {
+      // Silent — don't break layout if inventory endpoint is unavailable
+    }
   }, [])
 
   const fetchStatus = useCallback(async () => {
@@ -78,7 +174,7 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
     }
   }, [stopPolling])
 
-  // Initial fetch on mount
+  // Initial fetch on mount — pipeline status
   useEffect(() => {
     fetchStatus()
     return () => {
@@ -87,7 +183,33 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
     }
   }, [fetchStatus, stopPolling])
 
-  // Listen for trigger from data-ingestion page after upload
+  // Initial fetch on mount — inventory alerts
+  // 150ms delay so the first render paints before the toast slides in
+  useEffect(() => {
+    const t = setTimeout(fetchInventoryAlerts, 150)
+    return () => {
+      clearTimeout(t)
+      if (invAutoDismissRef.current) clearTimeout(invAutoDismissRef.current)
+      if (invProgressiveRef.current)  clearTimeout(invProgressiveRef.current)
+    }
+  }, [fetchInventoryAlerts])
+
+  // Re-fetch inventory alerts whenever pipeline finishes or data is refreshed
+  useEffect(() => {
+    const handler = () => {
+      invDismissedRef.current = false   // new data → allow toast again
+      setInvToastDismissed(false)
+      fetchInventoryAlerts()
+    }
+    window.addEventListener("pipeline:dataready", handler)
+    window.addEventListener("pipeline:refetch",   handler)
+    return () => {
+      window.removeEventListener("pipeline:dataready", handler)
+      window.removeEventListener("pipeline:refetch",   handler)
+    }
+  }, [fetchInventoryAlerts])
+
+  // Listen for trigger from data-ingestion page after upload — pipeline
   useEffect(() => {
     const handler = () => fetchStatus()
     window.addEventListener("pipeline:refetch", handler)
@@ -139,8 +261,26 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
                 </span>
               )}
               <NotificationBell
-                hasActiveNotification={(pipelineStatus === "processing" || pipelineStatus === "uploaded" || pipelineStatus === "failed") && toastDismissed}
-                onClick={() => { setToastDismissed(false); setToastVisible(true) }}
+                hasActiveNotification={
+                  (pipelineStatus === "processing" || pipelineStatus === "uploaded" || pipelineStatus === "failed") &&
+                  toastDismissed
+                }
+                inventoryAlertCount={invAlertTotal}
+                onClick={() => {
+                  // Bell click → re-show inventory alert toast (primary) …
+                  if (invAlertTotal > 0) {
+                    invDismissedRef.current = false
+                    setInvToastDismissed(false)
+                    setInvToastVisible(true)
+                    if (invAutoDismissRef.current) clearTimeout(invAutoDismissRef.current)
+                    invAutoDismissRef.current = setTimeout(() => setInvToastVisible(false), 15000)
+                  }
+                  // … and re-show pipeline toast if applicable
+                  if (pipelineStatus !== "no_data" && pipelineStatus !== "ready") {
+                    setToastDismissed(false)
+                    setToastVisible(true)
+                  }
+                }}
               />
             </div>
           </div>
@@ -153,6 +293,18 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
         visible={toastVisible}
         lastRunAt={lastRunAt ?? undefined}
         onDismiss={() => { setToastVisible(false); setToastDismissed(true) }}
+      />
+
+      <InventoryAlertToast
+        criticalCount={invAlertCritical}
+        totalCount={invAlertTotal}
+        visible={invToastVisible && !invToastDismissed}
+        abovePipeline={toastVisible && !toastDismissed}
+        onDismiss={() => {
+          setInvToastVisible(false)
+          setInvToastDismissed(true)
+          invDismissedRef.current = true
+        }}
       />
     </div>
   )

@@ -6,9 +6,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Search, AlertTriangle, TrendingDown, CheckCircle2, Skull } from "lucide-react"
+import { Search, AlertTriangle, TrendingDown, CheckCircle2, Skull, BarChart2, History, HelpCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { InventoryItem } from "@/lib/api"
+import type { InventoryItem, StockoutAlert, AlertMode } from "@/lib/api"
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,7 +19,9 @@ function isBelowReorder(item: InventoryItem): boolean {
   return item.reorder_point != null && item.current_stock <= item.reorder_point
 }
 
-function StockStatusBadge({ item }: { item: InventoryItem }) {
+// isAlert = item appears in backend stockout-alert list
+function StockStatusBadge({ item, isAlert }: { item: InventoryItem; isAlert: boolean }) {
+  // Priority: Reordenar > Stock Muerto > Atención (stockout risk) > Mov. Lento > OK > Pendiente
   if (isBelowReorder(item)) {
     return (
       <Badge variant="destructive" className="gap-1">
@@ -35,6 +38,16 @@ function StockStatusBadge({ item }: { item: InventoryItem }) {
       </Badge>
     )
   }
+  // Orange — stockout risk (forecast demand will exceed stock during lead time)
+  if (isAlert) {
+    return (
+      <Badge variant="secondary" className="gap-1 bg-orange-500/10 text-orange-500">
+        <AlertTriangle className="h-3 w-3" />
+        Atención
+      </Badge>
+    )
+  }
+  // Amber — slow-moving (high days-of-stock but no imminent stockout)
   if (item.slow_moving_flag === true) {
     return (
       <Badge variant="secondary" className="gap-1 bg-warning/10 text-warning">
@@ -73,6 +86,86 @@ function ReorderCell({ item }: { item: InventoryItem }) {
 }
 
 // ---------------------------------------------------------------------------
+// Inventory guide popover — explains badges and columns
+// ---------------------------------------------------------------------------
+
+function Dot({ color }: { color: string }) {
+  return <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${color}`} />
+}
+
+function GuideRow({ dot, label, desc }: { dot: string; label: string; desc: string }) {
+  return (
+    <div className="flex items-start gap-2">
+      <Dot color={dot} />
+      <div className="min-w-0">
+        <span className="font-medium text-foreground">{label}</span>
+        <span className="text-muted-foreground"> — {desc}</span>
+      </div>
+    </div>
+  )
+}
+
+function ColRow({ label, desc }: { label: string; desc: string }) {
+  return (
+    <div className="flex gap-2">
+      <span className="w-28 shrink-0 font-medium text-foreground">{label}</span>
+      <span className="text-muted-foreground">{desc}</span>
+    </div>
+  )
+}
+
+function InventoryGuide() {
+  return (
+    <HoverCard openDelay={200} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <button
+          className="flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:text-foreground transition-colors"
+          aria-label="Cómo interpretar el inventario"
+        >
+          <HelpCircle className="h-4 w-4" />
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent align="start" className="w-96 p-4 text-xs space-y-4">
+        {/* Header */}
+        <p className="text-sm font-semibold text-foreground">Cómo leer el inventario</p>
+
+        {/* Estados */}
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Estados</p>
+          <GuideRow dot="bg-destructive"    label="Reordenar"    desc="Stock ≤ punto de reorden. Actúa hoy." />
+          <GuideRow dot="bg-orange-500"     label="Atención"     desc="La demanda proyectada durante el lead time supera el stock. Riesgo de quedarse sin stock antes del próximo pedido." />
+          <GuideRow dot="bg-warning"        label="Mov. Lento"   desc="Más de 90 días de stock acumulado. El producto rota poco." />
+          <GuideRow dot="bg-destructive/60" label="Stock Muerto" desc="Más de 180 días de stock. Sin rotación significativa." />
+          <GuideRow dot="bg-success"        label="OK"           desc="Stock suficiente y rotación normal." />
+        </div>
+
+        {/* Columnas */}
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Columnas clave</p>
+          <ColRow label="Días Stock"     desc="Cuántos días dura el stock al ritmo histórico de ventas." />
+          <ColRow label="Pto. Reorden"   desc="Umbral mínimo antes de pedir = demanda diaria × lead time." />
+          <ColRow label="Lead Time"      desc="Días que tarda en llegar un nuevo pedido al almacén." />
+          <ColRow label="Pronóstico/mes" desc="Demanda proyectada por el modelo para el próximo mes." />
+        </div>
+
+        {/* Tip clave */}
+        <div className="rounded-md bg-muted/60 px-3 py-2 space-y-1">
+          <p className="font-semibold text-foreground">Atención ≠ Días Stock bajos</p>
+          <p className="text-muted-foreground leading-relaxed">
+            Un SKU con pocos días de stock puede ser{" "}
+            <span className="text-success font-medium">OK</span> si sus unidades cubren
+            la demanda durante el lead time.{" "}
+            <span className="text-orange-500 font-medium">Atención</span> se activa cuando
+            el stock <em>no alcanza</em> para esperar el próximo pedido — aunque los días
+            de stock parezcan suficientes.
+          </p>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Filter tabs
 // ---------------------------------------------------------------------------
 
@@ -90,7 +183,7 @@ function FilterTabs({ active, counts, onChange }: FilterTabProps) {
     { key: "reorder",label: "Por Reordenar",   count: counts.reorder},
     { key: "slow",   label: "Movimiento Lento",count: counts.slow   },
     { key: "dead",   label: "Stock Muerto",    count: counts.dead   },
-    { key: "alerts", label: "Alertas",         count: counts.alerts },
+    { key: "alerts", label: "Riesgo Sin Stock", count: counts.alerts },
   ]
 
   return (
@@ -134,16 +227,20 @@ function FilterTabs({ active, counts, onChange }: FilterTabProps) {
 
 interface InventoryTableProps {
   items: InventoryItem[]
+  alerts?: StockoutAlert[]
+  alertMode?: AlertMode
 }
 
-export function InventoryTable({ items }: InventoryTableProps) {
+export function InventoryTable({ items, alerts = [], alertMode }: InventoryTableProps) {
   const [search, setSearch]   = useState("")
   const [filter, setFilter]   = useState<FilterType>("all")
+
+  const alertItemIds = new Set(alerts.map((a) => a.item_id))
 
   const reorderItems  = items.filter(isBelowReorder)
   const slowItems     = items.filter((i) => i.slow_moving_flag === true && i.stock_status !== "dead_stock")
   const deadItems     = items.filter((i) => i.stock_status === "dead_stock")
-  const alertItems = items.filter((i) => i.days_of_stock != null && i.days_of_stock <= i.lead_time_days * 1.5)
+  const alertItems    = items.filter((i) => alertItemIds.has(i.item_id))
 
   const counts = {
     all:     items.length,
@@ -159,7 +256,7 @@ export function InventoryTable({ items }: InventoryTableProps) {
       if (filter === "reorder") return isBelowReorder(i)
       if (filter === "slow")    return i.slow_moving_flag === true && i.stock_status !== "dead_stock"
       if (filter === "dead")    return i.stock_status === "dead_stock"
-      if (filter === "alerts")  return i.days_of_stock != null && i.days_of_stock <= i.lead_time_days * 1.5
+      if (filter === "alerts")  return alertItemIds.has(i.item_id)
       return true
     })
 
@@ -169,7 +266,10 @@ export function InventoryTable({ items }: InventoryTableProps) {
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <CardTitle className="text-card-foreground">Inventario por SKU</CardTitle>
+              <CardTitle className="flex items-center gap-1.5 text-card-foreground">
+                Inventario por SKU
+                <InventoryGuide />
+              </CardTitle>
               <CardDescription>
                 {reorderItems.length > 0 && (
                   <span className="text-destructive font-medium">
@@ -201,6 +301,24 @@ export function InventoryTable({ items }: InventoryTableProps) {
           </div>
 
           <FilterTabs active={filter} counts={counts} onChange={setFilter} />
+
+          {filter === "alerts" && alertMode && alertMode !== "no_data" && (
+            <div className={cn(
+              "flex items-center gap-2 rounded-lg px-3 py-2 text-xs",
+              alertMode === "forecast"
+                ? "bg-primary/8 text-primary border border-primary/20"
+                : "bg-warning/8 text-warning border border-warning/20"
+            )}>
+              {alertMode === "forecast"
+                ? <BarChart2 className="h-3.5 w-3.5 shrink-0" />
+                : <History className="h-3.5 w-3.5 shrink-0" />
+              }
+              {alertMode === "forecast"
+                ? "Riesgo calculado con demanda proyectada por el modelo de pronóstico (Prophet)."
+                : "Sin pronóstico disponible — riesgo estimado con ventas históricas."
+              }
+            </div>
+          )}
         </div>
       </CardHeader>
 
@@ -238,6 +356,8 @@ export function InventoryTable({ items }: InventoryTableProps) {
                         ? "border-l-2 border-l-destructive bg-destructive/5 hover:bg-destructive/10"
                         : item.stock_status === "dead_stock"
                         ? "border-l-2 border-l-destructive/50 bg-destructive/5 hover:bg-destructive/10"
+                        : alertItemIds.has(item.item_id)
+                        ? "border-l-2 border-l-orange-500 bg-orange-500/5 hover:bg-orange-500/10"
                         : item.slow_moving_flag === true
                         ? "border-l-2 border-l-warning bg-warning/5 hover:bg-warning/10"
                         : "hover:bg-muted/40"
@@ -299,7 +419,7 @@ export function InventoryTable({ items }: InventoryTableProps) {
 
                     {/* Estado */}
                     <TableCell>
-                      <StockStatusBadge item={item} />
+                      <StockStatusBadge item={item} isAlert={alertItemIds.has(item.item_id)} />
                     </TableCell>
                   </TableRow>
                 ))

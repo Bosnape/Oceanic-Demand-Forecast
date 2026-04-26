@@ -598,20 +598,29 @@ async def get_inventory(db: Session = Depends(get_db)):
     "/api/inventory/alerts",
     tags=["Inventory"],
     summary="Get stockout risk alerts per SKU",
-    description="Identifies SKUs where projected demand exceeds available inventory within the lead time window.",
+    description=(
+        "Identifies SKUs at risk of stockout. "
+        "Uses demand forecast (Prophet) when available; falls back to historical sales rate otherwise. "
+        "Response includes alert_mode so the frontend can communicate the data source to the user."
+    ),
 )
 async def get_inventory_alerts(db: Session = Depends(get_db)):
     try:
+        from sqlalchemy import func as sqlfunc
+        from datetime import timedelta
+        import math
+
         company = db.query(Company).order_by(Company.id.asc()).first()
         if not company:
-            return {"alerts": []}
+            return {"alerts": [], "alert_mode": "no_data", "message": "No hay datos disponibles."}
 
-        # Get latest inventory snapshot per SKU
-        from sqlalchemy import func
+        # ------------------------------------------------------------------
+        # Latest inventory snapshot per SKU
+        # ------------------------------------------------------------------
         latest_dates = (
             db.query(
                 InventorySnapshot.item_id,
-                func.max(InventorySnapshot.date).label("max_date"),
+                sqlfunc.max(InventorySnapshot.date).label("max_date"),
             )
             .filter(InventorySnapshot.company_id == company.id)
             .group_by(InventorySnapshot.item_id)
@@ -629,82 +638,133 @@ async def get_inventory_alerts(db: Session = Depends(get_db)):
         )
 
         if not snapshots:
-            return {"alerts": []}
+            return {"alerts": [], "alert_mode": "no_data", "message": "No hay datos de inventario."}
 
-        # Get next 90 days of predictions per SKU
-        # Anchor to data timeline (not date.today()) so historical CSVs work correctly
-        from datetime import timedelta
-        from sqlalchemy import func as sqlfunc
+        # ------------------------------------------------------------------
+        # Determine alert mode: forecast or historical fallback
+        # ------------------------------------------------------------------
         min_forecast_date = (
             db.query(sqlfunc.min(Prediction.forecast_date))
             .filter(Prediction.company_id == company.id)
             .scalar()
         )
-        if not min_forecast_date:
-            return {"alerts": []}
 
-        forecast_start = min_forecast_date
-        forecast_end   = min_forecast_date + timedelta(days=90)
+        alert_mode = "forecast" if min_forecast_date else "historical"
 
-        predictions = (
-            db.query(Prediction)
-            .filter(
-                Prediction.company_id == company.id,
-                Prediction.forecast_date >= forecast_start,
-                Prediction.forecast_date <= forecast_end,
+        # ------------------------------------------------------------------
+        # Build avg_daily_demand per SKU depending on mode
+        # ------------------------------------------------------------------
+        avg_demand_by_sku: dict[str, float] = {}
+        reference_date = None  # used to project stockout_date
+
+        if alert_mode == "forecast":
+            forecast_start = min_forecast_date
+            forecast_end   = min_forecast_date + timedelta(days=90)
+            reference_date = forecast_start
+
+            predictions = (
+                db.query(Prediction)
+                .filter(
+                    Prediction.company_id == company.id,
+                    Prediction.forecast_date >= forecast_start,
+                    Prediction.forecast_date <= forecast_end,
+                )
+                .all()
             )
-            .all()
-        )
 
-        # Build dict: item_id → list of predicted_demand values
-        forecast_by_sku: dict[str, list[float]] = {}
-        for p in predictions:
-            forecast_by_sku.setdefault(p.item_id, []).append(float(p.predicted_demand))
+            demand_lists: dict[str, list[float]] = {}
+            for p in predictions:
+                demand_lists.setdefault(p.item_id, []).append(float(p.predicted_demand))
 
+            avg_demand_by_sku = {
+                item_id: sum(vals) / len(vals)
+                for item_id, vals in demand_lists.items()
+                if vals
+            }
+
+        else:
+            # Historical fallback: reuse days_of_stock already stored in inventory_analysis.
+            # avg_daily_demand = inventory_on_hand / days_of_stock (reverse formula).
+            snapshot_ids = [s.id for s in snapshots]
+            analyses = (
+                db.query(InventoryAnalysis)
+                .filter(InventoryAnalysis.inventory_snapshot_id.in_(snapshot_ids))
+                .all()
+            )
+            analysis_by_snapshot = {a.inventory_snapshot_id: a for a in analyses}
+
+            max_sale_date = (
+                db.query(sqlfunc.max(SalesTransaction.date))
+                .filter(SalesTransaction.company_id == company.id)
+                .scalar()
+            )
+            reference_date = max_sale_date
+
+            for snap in snapshots:
+                analysis = analysis_by_snapshot.get(snap.id)
+                if analysis and analysis.days_of_stock and analysis.days_of_stock > 0:
+                    available = snap.inventory_available if snap.inventory_available is not None else snap.inventory_on_hand
+                    avg_demand_by_sku[snap.item_id] = available / float(analysis.days_of_stock)
+
+        # ------------------------------------------------------------------
+        # Build alerts
+        # ------------------------------------------------------------------
         alerts = []
         for snap in snapshots:
-            demands = forecast_by_sku.get(snap.item_id, [])
+            avg_daily_demand = avg_demand_by_sku.get(snap.item_id)
+            if not avg_daily_demand or avg_daily_demand <= 0:
+                continue
+
             available = snap.inventory_available if snap.inventory_available is not None else snap.inventory_on_hand
             lead_time = snap.lead_time_days
 
-            if not demands:
-                # No forecast available for this SKU — skip
-                continue
-
-            avg_daily_demand = sum(demands) / len(demands)
-
-            if avg_daily_demand <= 0:
-                continue
-
-            days_of_stock = available / avg_daily_demand
+            days_of_stock          = available / avg_daily_demand
             demand_during_lead_time = avg_daily_demand * lead_time
 
-            # Determine stock status
             if available <= demand_during_lead_time:
                 stock_status = "critical"
             elif available <= demand_during_lead_time * 1.5:
                 stock_status = "low"
             else:
-                stock_status = "ok"
+                continue  # ok — skip
 
-            if stock_status in ("critical", "low"):
-                stockout_date = forecast_start + timedelta(days=int(days_of_stock))
-                alerts.append({
-                    "item_id": snap.item_id,
-                    "store_id": snap.store_id,
-                    "current_stock": available,
-                    "lead_time_days": lead_time,
-                    "avg_daily_demand": round(avg_daily_demand, 2),
-                    "demand_during_lead_time": round(demand_during_lead_time, 2),
-                    "days_of_stock": round(days_of_stock, 1),
-                    "stockout_date": stockout_date.isoformat(),
-                    "stock_status": stock_status,
-                })
+            # Units to order: cover lead-time demand + 25% safety buffer, minus current stock
+            units_to_order = max(
+                math.ceil(demand_during_lead_time * 1.25 - available),
+                snap.reorder_quantity or 0,
+            )
 
-        # Sort by urgency: critical first, then by days_of_stock ascending
+            stockout_date = (
+                (reference_date + timedelta(days=int(days_of_stock))).isoformat()
+                if reference_date else None
+            )
+
+            alerts.append({
+                "item_id": snap.item_id,
+                "store_id": snap.store_id,
+                "current_stock": available,
+                "lead_time_days": lead_time,
+                "avg_daily_demand": round(avg_daily_demand, 2),
+                "demand_during_lead_time": round(demand_during_lead_time, 2),
+                "days_of_stock": round(days_of_stock, 1),
+                "stockout_date": stockout_date,
+                "stock_status": stock_status,
+                "units_to_order": units_to_order,
+            })
+
         alerts.sort(key=lambda x: (0 if x["stock_status"] == "critical" else 1, x["days_of_stock"]))
 
-        return {"alerts": alerts}
+        mode_message = (
+            "Alertas basadas en demanda proyectada por el modelo de pronóstico (Prophet)."
+            if alert_mode == "forecast"
+            else "No hay pronóstico disponible. Alertas estimadas a partir de ventas históricas."
+        )
+
+        return {
+            "alerts": alerts,
+            "alert_mode": alert_mode,
+            "message": mode_message,
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calculating stockout alerts: {e}")

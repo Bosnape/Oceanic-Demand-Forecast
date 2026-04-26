@@ -138,12 +138,17 @@ export interface StockoutAlert {
   avg_daily_demand: number
   demand_during_lead_time: number
   days_of_stock: number
-  stockout_date: string
+  stockout_date: string | null
   stock_status: "critical" | "low"
+  units_to_order: number
 }
+
+export type AlertMode = "forecast" | "historical" | "no_data"
 
 export interface AlertsResponse {
   alerts: StockoutAlert[]
+  alert_mode: AlertMode
+  message: string
 }
 
 export function getInventoryAlerts(): Promise<AlertsResponse> {
