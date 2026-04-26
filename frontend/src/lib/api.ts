@@ -155,6 +155,43 @@ export function getInventoryAlerts(): Promise<AlertsResponse> {
   return api.get<AlertsResponse>("/api/inventory/alerts").then((r) => r.data)
 }
 
+// ---------------------------------------------------------------------------
+// Model accuracy metrics (US-13)
+// ---------------------------------------------------------------------------
 
+export interface SkuMetrics {
+  item_id: string
+  mae: number | null
+  rmse: number | null
+  mape: number | null
+  coverage_ic: number | null
+  bias: number | null
+  training_samples: number | null
+  validation_samples: number | null
+  seasonality_mode: string | null
+  last_updated: string | null
+}
+
+export interface AggregateMetrics {
+  item_id: null
+  mae: number | null
+  rmse: number | null
+  mape: number | null
+  coverage_ic: number | null
+  bias: number | null
+  training_samples: number | null
+  validation_samples: number | null
+  seasonality_mode: string | null
+  last_updated: string | null
+}
+
+export interface ModelMetricsResponse {
+  aggregate: AggregateMetrics | null
+  per_sku: SkuMetrics[]
+}
+
+export function getModelMetrics(): Promise<ModelMetricsResponse> {
+  return api.get<ModelMetricsResponse>("/api/predictions/metrics").then((r) => r.data)
+}
 
 export default api
