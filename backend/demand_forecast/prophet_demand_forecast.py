@@ -18,7 +18,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy.orm import Session
 from database.database import SessionLocal
-from database.models import Prediction, Company
+from database.models import Prediction, Company, ModelMetrics
 
 warnings.filterwarnings('ignore')
 
@@ -165,6 +165,38 @@ def evaluate(forecast, df_test):
     rmse = np.sqrt(mean_squared_error(real, pred))
     mae_rel = mae / real.mean() * 100
     return mae, rmse, mae_rel
+
+
+def evaluate_full(forecast, df_val):
+    """
+    Extended evaluation: MAE, RMSE, MAPE, confidence-interval coverage, and bias.
+    Works for both out-of-sample test sets and in-sample validation windows.
+    """
+    pred  = forecast.set_index('ds')['yhat'].reindex(df_val['ds'].values)
+    lower = forecast.set_index('ds')['yhat_lower'].reindex(df_val['ds'].values)
+    upper = forecast.set_index('ds')['yhat_upper'].reindex(df_val['ds'].values)
+    real  = df_val.set_index('ds')['y']
+
+    mask = pred.notna() & real.notna()
+    pred, real, lower, upper = pred[mask], real[mask], lower[mask], upper[mask]
+
+    if len(pred) == 0:
+        return None, None, None, None, None
+
+    mae  = float(mean_absolute_error(real, pred))
+    rmse = float(np.sqrt(mean_squared_error(real, pred)))
+
+    # MAPE — skip zero-demand days (avoid division by zero)
+    nz   = real > 0
+    mape = float((abs(real[nz] - pred[nz]) / real[nz]).mean() * 100) if nz.sum() > 0 else None
+
+    # % of actual values inside the confidence interval
+    coverage_ic = float(((real >= lower) & (real <= upper)).mean() * 100)
+
+    # Bias: positive → model overforecasts on average
+    bias = float((pred - real).mean())
+
+    return mae, rmse, mape, coverage_ic, bias
 
 # =============================================================================
 # Section 5: Hyperparameter Tuning (pilot SKU)
@@ -451,6 +483,90 @@ def save_predictions_to_db(forecasts, company_id=1):
         db.close()
 
 # =============================================================================
+# Section 9: Save Model Metrics to Database
+# =============================================================================
+
+def save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id):
+    """
+    Compute and persist accuracy metrics for each SKU.
+
+    Uses the in-sample fitted values for the last tuning_cutoff_days of historical
+    data as the validation window. No extra training run is needed — the full-data
+    models already contain fitted values for all historical dates.
+
+    Saves one row per SKU + one aggregate row (item_id = NULL).
+    """
+    db: Session = SessionLocal()
+    try:
+        db.query(ModelMetrics).filter(ModelMetrics.company_id == company_id).delete()
+        db.commit()
+
+        records       = []
+        all_sku_stats = []
+        validation_start = pd.Timestamp(tuning_cutoff)
+
+        for sku, content in forecasts.items():
+            forecast = content['forecast']
+            df_full  = content['df_full']
+            df_train = content['df_train']
+
+            # Validation window: last N days of the historical data
+            df_val = df_full[df_full['ds'] > validation_start].copy()
+            if len(df_val) < 7:
+                continue
+
+            mae, rmse, mape, coverage_ic, bias = evaluate_full(forecast, df_val)
+            if mae is None:
+                continue
+
+            records.append(ModelMetrics(
+                company_id=company_id,
+                item_id=sku,
+                mae=round(mae, 4),
+                rmse=round(rmse, 4),
+                mape=round(mape, 2) if mape is not None else None,
+                coverage_ic=round(coverage_ic, 2),
+                bias=round(bias, 4),
+                training_samples=len(df_train),
+                validation_samples=len(df_val),
+                seasonality_mode=best_params.get('seasonality_mode', 'additive'),
+            ))
+            all_sku_stats.append({
+                'mae': mae, 'rmse': rmse, 'mape': mape,
+                'coverage_ic': coverage_ic, 'bias': bias,
+                'training_samples': len(df_train),
+                'validation_samples': len(df_val),
+            })
+
+        # Aggregate row (item_id = NULL)
+        if all_sku_stats:
+            valid_mapes = [s['mape'] for s in all_sku_stats if s['mape'] is not None]
+            records.append(ModelMetrics(
+                company_id=company_id,
+                item_id=None,
+                mae=round(float(np.mean([s['mae']  for s in all_sku_stats])), 4),
+                rmse=round(float(np.mean([s['rmse'] for s in all_sku_stats])), 4),
+                mape=round(float(np.mean(valid_mapes)), 2) if valid_mapes else None,
+                coverage_ic=round(float(np.mean([s['coverage_ic'] for s in all_sku_stats])), 2),
+                bias=round(float(np.mean([s['bias'] for s in all_sku_stats])), 4),
+                training_samples=sum(s['training_samples'] for s in all_sku_stats),
+                validation_samples=sum(s['validation_samples'] for s in all_sku_stats),
+                seasonality_mode=best_params.get('seasonality_mode', 'additive'),
+            ))
+
+        db.bulk_save_objects(records)
+        db.commit()
+        sku_count = len(records) - 1 if records else 0
+        print(f"Model metrics saved — {sku_count} SKUs + 1 aggregate row")
+
+    except Exception as e:
+        db.rollback()
+        print(f"Error saving model metrics: {e}")
+    finally:
+        db.close()
+
+
+# =============================================================================
 # Pipeline Entry Point (callable from FastAPI)
 # =============================================================================
 
@@ -484,6 +600,9 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
 
     # Save predictions to database
     save_predictions_to_db(forecasts, company_id=company_id)
+
+    # Compute and persist accuracy metrics (in-sample validation window)
+    save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id)
 
     print("\n── Pipeline completed ───────────────────────────────────────")
     print(f"  SKUs trained:              {len(forecasts)}")
