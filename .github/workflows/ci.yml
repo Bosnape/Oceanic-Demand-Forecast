@@ -9,7 +9,7 @@ on:
 jobs:
   # ─── Backend ────────────────────────────────────────────────────────────────
   backend:
-    name: Backend — install & syntax check
+    name: Backend — install, syntax check & automated tests
     runs-on: ubuntu-latest
 
     services:
@@ -64,7 +64,7 @@ jobs:
 
   # ─── Frontend ───────────────────────────────────────────────────────────────
   frontend:
-    name: Frontend — install & build check
+    name: Frontend — install, automated tests & build check
     runs-on: ubuntu-latest
 
     steps:
