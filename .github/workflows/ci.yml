@@ -9,7 +9,7 @@ on:
 jobs:
   # ─── Backend ────────────────────────────────────────────────────────────────
   backend:
-    name: Backend — install & syntax check
+    name: Backend — install, syntax check & automated tests
     runs-on: ubuntu-latest
 
     services:
@@ -56,9 +56,15 @@ jobs:
         working-directory: backend
         run: python -c "from api.main import app; print('API loaded OK')"
 
+      - name: Run backend tests
+        working-directory: backend
+        run: pytest tests/ -v --cov=api --cov=inventory --cov-report=term-missing -m "not slow"
+        env:
+          DATABASE_URL: postgresql://oceanic:oceanic@localhost:5432/oceanic
+
   # ─── Frontend ───────────────────────────────────────────────────────────────
   frontend:
-    name: Frontend — install & build check
+    name: Frontend — install, automated tests & build check
     runs-on: ubuntu-latest
 
     steps:
@@ -75,6 +81,12 @@ jobs:
       - name: Install dependencies
         working-directory: frontend/src
         run: npm ci
+
+      - name: Run frontend tests
+        working-directory: frontend/src
+        run: npm test -- --ci --coverage
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
 
       - name: Build Next.js app
         working-directory: frontend/src

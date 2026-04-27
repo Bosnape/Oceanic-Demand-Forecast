@@ -267,7 +267,7 @@ function MetricCard({
   )
 }
 
-function ReliabilityBanner({ perSku }: { perSku: ModelMetricsResponse["per_sku"] }) {
+export function ReliabilityBanner({ perSku }: { perSku: ModelMetricsResponse["per_sku"] }) {
   if (perSku.length === 0) return null
   const reliable = perSku.filter((s) => s.mape !== null && s.mape < 30).length
   const total    = perSku.length

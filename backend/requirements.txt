@@ -14,3 +14,6 @@ scikit-learn
 flake8
 black
 nbqa
+pytest
+pytest-cov
+httpx
