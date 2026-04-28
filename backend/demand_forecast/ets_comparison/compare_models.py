@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import warnings
 import os
 import sys
@@ -8,9 +9,13 @@ from sklearn.metrics import mean_absolute_error
 from prophet import Prophet
 import logging
 
-# Agregar la ruta actual para poder importar desde la carpeta ets
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from ets.ets_model import train_predict_ets
+# Añadir el directorio padre al path para importar prophet_demand_forecast (una vez movido a ets_comparison/)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
+from ets_model import train_predict_ets
+from prophet_demand_forecast import hyperparameter_tuning
 
 # Silenciar logs molestos
 warnings.filterwarnings("ignore")
@@ -28,12 +33,12 @@ def evaluate_mae_rel(real, pred):
     return (mae / real.mean() * 100) if real.mean() != 0 else 0
 
 
-def run_comparison(data_path="reference_sales.csv", forecast_days=90):
+def run_comparison(data_path="../reference_sales.csv", forecast_days=90):
     print("=== Iniciando Competencia: ETS Baseline vs Prophet ===")
 
-    # Usar carpeta ml_plots existente
+    # Usar la nueva estructura de carpetas: plots/
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    plot_dir = os.path.join(base_dir, "ml_plots")
+    plot_dir = os.path.join(base_dir, "plots")
     os.makedirs(plot_dir, exist_ok=True)
 
     data = load_data(os.path.join(base_dir, data_path))
@@ -53,6 +58,7 @@ def run_comparison(data_path="reference_sales.csv", forecast_days=90):
     cutoff = max_date - pd.Timedelta(days=forecast_days)
     skus = data["item_id"].unique()
     resultados = []
+    ets_forecasts = []
 
     print(
         f"Evaluando ambos modelos sobre los últimos {forecast_days} días de prueba...\n"
@@ -87,6 +93,14 @@ def run_comparison(data_path="reference_sales.csv", forecast_days=90):
             pred_ets = train_predict_ets(train["units_sold"], len(test))
             mae_rel_ets = evaluate_mae_rel(real, pred_ets)
 
+            # Guardar predicciones ETS para el plot agregado
+            df_fcst = pd.DataFrame({
+                "ds": test["date"].values,
+                "yhat": pred_ets,
+                "item_id": sku
+            })
+            ets_forecasts.append(df_fcst)
+
             # --- ENTRENAR PROPHET ---
             train_p = train.rename(columns={"date": "ds", "units_sold": "y"})
             test_p = test.rename(columns={"date": "ds", "units_sold": "y"})
@@ -94,8 +108,14 @@ def run_comparison(data_path="reference_sales.csv", forecast_days=90):
             # Misma regla justa: ¿Cambió el precio en la historia?
             use_price = train_p["sell_price"].nunique() > 1
 
+            # --- CORRECCIÓN: Optimización de hiperparámetros ---
+            best_params = hyperparameter_tuning(train_p, holidays)
+
             model_prophet = Prophet(
-                holidays=holidays, seasonality_mode="multiplicative"
+                holidays=holidays,
+                seasonality_mode=best_params["seasonality_mode"],
+                changepoint_prior_scale=best_params["changepoint_prior_scale"],
+                seasonality_prior_scale=best_params["seasonality_prior_scale"],
             )
             if use_price:
                 model_prophet.add_regressor("sell_price")
@@ -127,7 +147,7 @@ def run_comparison(data_path="reference_sales.csv", forecast_days=90):
         return
 
     # 1. Guardar CSV
-    csv_path = os.path.join(plot_dir, "comparacion_metricas.csv")
+    csv_path = os.path.join(plot_dir, "compare_metrics.csv")
     df_res.to_csv(csv_path, index=False)
 
     # 2. Generar Gráfica PNG
@@ -159,9 +179,64 @@ def run_comparison(data_path="reference_sales.csv", forecast_days=90):
     plt.grid(axis="y", linestyle="--", alpha=0.7)
 
     plt.tight_layout()
-    plot_path = os.path.join(plot_dir, "comparacion_modelos.png")
+    plot_path = os.path.join(plot_dir, "compare_models.png")
     plt.savefig(plot_path, dpi=300)
-    print(f"\n✅ ¡Evidencia guardada!\nGráfica: {plot_path}\nCSV: {csv_path}")
+    plt.close()
+
+    # --- 3. Generar Gráfica: ETS Aggregated Forecast ---
+    if ets_forecasts:
+        real_agg = data.groupby("date")["units_sold"].sum().reset_index().rename(columns={"date": "ds", "units_sold": "y"})
+        agg_fcst = pd.concat(ets_forecasts, ignore_index=True).groupby("ds")["yhat"].sum().reset_index()
+        
+        real_train = real_agg[real_agg["ds"] <= cutoff]
+        real_test = real_agg[real_agg["ds"] > cutoff]
+        train_ctx = real_train[real_train["ds"] >= real_train["ds"].max() - pd.Timedelta(days=180)]
+        
+        fig, ax = plt.subplots(figsize=(16, 5))
+        ax.plot(train_ctx["ds"], train_ctx["y"], color="steelblue", linewidth=0.9, label="Histórico", alpha=0.7)
+        ax.plot(real_test["ds"], real_test["y"], color="coral", linewidth=0.9, label="Real (Test)", alpha=0.9)
+        ax.plot(agg_fcst["ds"], agg_fcst["yhat"], color="green", linewidth=1.5, linestyle="--", label="Predicción ETS")
+        
+        ax.set_title("ETS: Predicción Agregada — Ventas Diarias Totales")
+        ax.set_xlabel("Fecha")
+        ax.set_ylabel("Unidades Vendidas")
+        ax.legend()
+        plt.tight_layout()
+        agg_plot_path = os.path.join(plot_dir, "ets_04_aggregated_forecast.png")
+        plt.savefig(agg_plot_path, dpi=300)
+        plt.close()
+
+    # --- 4. Generar Gráfica: ETS MAE Relativo por SKU ---
+    fig, ax = plt.subplots(figsize=(16, 5))
+    df_res_sorted = df_res.sort_values("MAE_Rel_ETS").reset_index(drop=True)
+    colors = [
+        "steelblue" if v <= 30 else "goldenrod" if v <= 60 else "coral"
+        for v in df_res_sorted["MAE_Rel_ETS"]
+    ]
+    ax.bar(df_res_sorted["SKU"], df_res_sorted["MAE_Rel_ETS"], color=colors, edgecolor="white")
+    
+    mean_val = df_res_sorted["MAE_Rel_ETS"].mean()
+    ax.axhline(y=mean_val, color="black", linestyle="--", linewidth=1.2, label=f"Promedio: {mean_val:.1f}%")
+    
+    ax.set_title("ETS: MAE Relativo por SKU")
+    ax.set_xlabel("SKU")
+    ax.set_ylabel("MAE Relativo (%)")
+    ax.tick_params(axis="x", rotation=90, labelsize=7)
+    
+    legend_elements = [
+        Patch(facecolor="steelblue", label="Bueno (≤30%)"),
+        Patch(facecolor="goldenrod", label="Moderado (30-60%)"),
+        Patch(facecolor="coral", label="Difícil (>60%)"),
+    ]
+    ax.legend(handles=legend_elements + ax.get_legend_handles_labels()[0], loc="upper left", fontsize=8)
+    
+    plt.tight_layout()
+    mae_plot_path = os.path.join(plot_dir, "ets_05_mae_relative_by_sku.png")
+    plt.savefig(mae_plot_path, dpi=300)
+    plt.close()
+
+    print(f"\n✅ ¡Evidencias guardadas en {plot_dir}!")
+    print(f"- compare_metrics.csv\n- compare_models.png\n- ets_04_aggregated_forecast.png\n- ets_05_mae_relative_by_sku.png")
 
 
 if __name__ == "__main__":
