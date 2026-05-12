@@ -15,7 +15,6 @@ DEAD_STOCK_DOH_THRESHOLD  = 180 # days of stock above this → dead stock / obso
 
 def run_inventory_analysis(company_id: int, db: Session) -> None:
     """Calcula y persiste el analisis de inventario para una empresa.
-
     Cubre:
     - US-10 (Valentina): punto de reorden por SKU basado en forecast y lead time.
     - US-08 (Martin): deteccion de inventario de movimiento lento y capital inmovilizado.
@@ -200,3 +199,12 @@ def run_inventory_analysis(company_id: int, db: Session) -> None:
 
     db.bulk_save_objects(records)
     db.commit()
+
+
+def FutureInventoryProjection(company_id: int, db: Session):
+    """Proyecta el inventario futuro para los proximos 30 dias, considerando forecast y ventas recientes.
+    Se puede usar para detectar futuros stockouts o exceso de inventario con anticipacion.
+    """ 
+
+
+

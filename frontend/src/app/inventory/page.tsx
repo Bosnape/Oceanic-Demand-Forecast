@@ -6,9 +6,10 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import { InventoryTable } from "@/components/tables/InventoryTable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getInventory, getInventoryAlerts, type InventoryItem, type StockoutAlert, type AlertMode } from "@/lib/api"
-import { PackageX, ShoppingCart, TrendingDown, DollarSign } from "lucide-react"
+import { PackageX, ShoppingCart, TrendingDown, DollarSign, BarChart2, Table2 } from "lucide-react"
 
 type LoadState = "loading" | "ready" | "empty" | "error"
+type ViewMode  = "table" | "projection"
 
 export default function InventoryPage() {
   const [items, setItems]         = useState<InventoryItem[]>([])
@@ -16,6 +17,7 @@ export default function InventoryPage() {
   const [alertMode, setAlertMode] = useState<AlertMode>("no_data")
   const [state, setState]         = useState<LoadState>("loading")
   const [errorMsg, setErrorMsg]   = useState("")
+  const [viewMode, setViewMode]   = useState<ViewMode>("table")
 
   useEffect(() => {
     Promise.all([
@@ -118,6 +120,34 @@ export default function InventoryPage() {
         )}
       </section>
 
+      {/* Toggle Vista */}
+      {state === "ready" && (
+        <div className="mb-6 flex gap-2">
+          <button
+            onClick={() => setViewMode("table")}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              viewMode === "table"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+          >
+            <Table2 className="h-4 w-4" />
+            Vista Tabla
+          </button>
+          <button
+            onClick={() => setViewMode("projection")}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              viewMode === "projection"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+          >
+            <BarChart2 className="h-4 w-4" />
+            Vista Proyección
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <section>
         {state === "loading" && (
@@ -127,7 +157,16 @@ export default function InventoryPage() {
             ))}
           </div>
         )}
-        {state === "ready" && <InventoryTable items={items} alerts={alerts} alertMode={alertMode} />}
+        {state === "ready" && viewMode === "table" && (
+          <InventoryTable items={items} alerts={alerts} alertMode={alertMode} />
+        )}
+        {state === "ready" && viewMode === "projection" && (
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
+            <BarChart2 className="h-10 w-10 text-muted-foreground/40" />
+            <p className="font-medium text-muted-foreground">Proyección de inventario</p>
+            <p className="text-sm text-muted-foreground">Próximamente — evolución de stock por SKU en los próximos 30 días.</p>
+          </div>
+        )}
         {state === "empty" && (
           <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
             <p className="text-muted-foreground">No hay datos de inventario disponibles.</p>
