@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(find /mnt/c/PROYECTOS/Oceanic-Demand-Forecast/frontend -name \"*.tsx\" 2>/dev/null | head -30 || echo \"WSL not available\" *)",
-      "Read(//mnt/c/PROYECTOS/Oceanic-Demand-Forecast/**)"
-    ]
-  }
-}
