@@ -201,10 +201,7 @@ def run_inventory_analysis(company_id: int, db: Session) -> None:
     db.commit()
 
 
-def FutureInventoryProjection(company_id: int, db: Session):
-    """Proyecta el inventario futuro para los proximos 30 dias, considerando forecast y ventas recientes.
-    Se puede usar para detectar futuros stockouts o exceso de inventario con anticipacion.
-    """ 
+
 
 
 
