@@ -12,34 +12,33 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts"
-import type { InventoryItem } from "@/lib/api"
+import type { InventoryItem, PredictionRecord } from "@/lib/api"
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildProjectionData(item: InventoryItem) {
-  const avgDaily = (item.next_month_forecast ?? 0) / 30
-  return Array.from({ length: 31 }, (_, day) => ({
-    dia: day,
-    stock: Math.max(0, item.available_stock - avgDaily * day),
-  }))
+function buildProjectionData(item: InventoryItem, predictions: PredictionRecord[]) {
+  const first30 = predictions.slice(0, 30)
+  let stock = item.available_stock
+  const points = [{ dia: 0, stock }]
+  first30.forEach((p, i) => {
+    stock = Math.max(0, stock - p.yhat)
+    points.push({ dia: i + 1, stock })
+  })
+  return points
 }
 
-function crossoverDay(item: InventoryItem): number | null {
+function crossoverDay(item: InventoryItem, data: { dia: number; stock: number }[]): number | null {
   if (!item.reorder_point || item.reorder_point <= 0) return null
-  const avgDaily = (item.next_month_forecast ?? 0) / 30
-  if (avgDaily === 0) return null
-  const day = (item.available_stock - item.reorder_point) / avgDaily
-  if (day < 0) return 0          // ya está por debajo hoy
-  return day <= 30 ? Math.round(day) : null
+  const found = data.find((p) => p.stock <= item.reorder_point!)
+  if (!found) return null
+  return found.dia === 0 ? 0 : found.dia
 }
 
-function stockoutDay(item: InventoryItem): number | null {
-  const avgDaily = (item.next_month_forecast ?? 0) / 30
-  if (avgDaily === 0) return null
-  const day = item.available_stock / avgDaily
-  return day >= 0 && day <= 30 ? Math.round(day) : null
+function stockoutDay(data: { dia: number; stock: number }[]): number | null {
+  const found = data.find((p) => p.stock <= 0)
+  return found ? found.dia : null
 }
 
 // ---------------------------------------------------------------------------
@@ -72,14 +71,16 @@ function CustomTooltip({
 
 interface Props {
   item: InventoryItem
-  compact?: boolean   // true → mini grid, false → expandido
+  compact?: boolean
+  predictions?: PredictionRecord[]
 }
 
-export function StockProjectionChart({ item, compact = false }: Props) {
-  const data        = buildProjectionData(item)
-  const reorderDay  = crossoverDay(item)
-  const zeroDay     = stockoutDay(item)
-  const hasNoData   = !item.next_month_forecast || item.next_month_forecast === 0
+export function StockProjectionChart({ item, compact = false, predictions }: Props) {
+  const hasData = predictions != null && predictions.length > 0
+
+  const data         = hasData ? buildProjectionData(item, predictions!) : []
+  const reorderDay   = hasData ? crossoverDay(item, data) : null
+  const zeroDay      = hasData ? stockoutDay(data) : null
 
   // Punto donde cruza el reorder point (para ReferenceDot)
   const crossoverStock =
@@ -94,7 +95,7 @@ export function StockProjectionChart({ item, compact = false }: Props) {
       : "oklch(0.45 0.18 250)"  // azul — ok
 
   // Resumen textual
-  const summary = hasNoData
+  const summary = !hasData
     ? "Sin forecast disponible — sube ventas y espera que Prophet entrene."
     : reorderDay === 0
     ? "⚠️ Ya está por debajo del punto de reorden."
@@ -112,7 +113,7 @@ export function StockProjectionChart({ item, compact = false }: Props) {
         <p className="text-xs text-muted-foreground">{summary}</p>
       )}
 
-      {hasNoData ? (
+      {!hasData ? (
         <div
           className="flex items-center justify-center rounded-lg bg-muted/40 text-xs text-muted-foreground"
           style={{ height: chartHeight }}
@@ -154,11 +155,7 @@ export function StockProjectionChart({ item, compact = false }: Props) {
                 stroke="oklch(0.65 0.20 45)"
                 strokeDasharray="5 5"
                 strokeWidth={1.5}
-                label={
-                  compact
-                    ? undefined
-                    : { value: "Punto reorden", position: "insideTopRight", fontSize: 11, fill: "oklch(0.65 0.20 45)" }
-                }
+                label={{ value: "Punto reorden", position: "insideTopRight", fontSize: compact ? 9 : 11, fill: "oklch(0.65 0.20 45)" }}
               />
             )}
 
@@ -173,27 +170,27 @@ export function StockProjectionChart({ item, compact = false }: Props) {
               activeDot={{ r: compact ? 3 : 4 }}
             />
 
-            {/* Punto de cruce con reorder */}
-            {reorderDay !== null && crossoverStock !== null && !compact && (
+            {/* Punto de cruce con reorder — en ambos modos, label solo en expandido */}
+            {reorderDay !== null && reorderDay > 0 && crossoverStock !== null && (
               <ReferenceDot
                 x={reorderDay}
                 y={crossoverStock}
-                r={5}
+                r={compact ? 4 : 5}
                 fill="oklch(0.65 0.20 45)"
                 stroke="white"
                 strokeWidth={2}
-                label={{ value: `Día ${reorderDay}`, position: "top", fontSize: 11, fill: "oklch(0.65 0.20 45)" }}
+                label={{ value: `Día ${reorderDay}`, position: "top", fontSize: compact ? 9 : 11, fill: "oklch(0.65 0.20 45)" }}
               />
             )}
 
             {/* Punto de stockout */}
-            {zeroDay !== null && !compact && (
+            {zeroDay !== null && (
               <ReferenceLine
                 x={zeroDay}
                 stroke="oklch(0.55 0.22 25)"
                 strokeDasharray="4 4"
                 strokeWidth={1.5}
-                label={{ value: `Sin stock D${zeroDay}`, position: "insideTopLeft", fontSize: 11, fill: "oklch(0.55 0.22 25)" }}
+                label={{ value: `Sin stock D${zeroDay}`, position: "insideTopLeft", fontSize: compact ? 9 : 11, fill: "oklch(0.55 0.22 25)" }}
               />
             )}
           </LineChart>
@@ -201,7 +198,21 @@ export function StockProjectionChart({ item, compact = false }: Props) {
       )}
 
       {compact && (
-        <p className="text-center text-[10px] leading-tight text-muted-foreground">{summary}</p>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-center gap-4">
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="inline-block h-0.5 w-4 rounded" style={{ backgroundColor: lineColor }} />
+              Stock proyectado
+            </span>
+            {item.reorder_point != null && item.reorder_point > 0 && (
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <span className="inline-block h-0.5 w-4 rounded border-t-2 border-dashed" style={{ borderColor: "oklch(0.65 0.20 45)" }} />
+                Punto reorden
+              </span>
+            )}
+          </div>
+          <p className="text-center text-[10px] leading-tight text-muted-foreground">{summary}</p>
+        </div>
       )}
     </div>
   )

@@ -1,87 +1,75 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { X, Plus } from "lucide-react"
+import { useState, useMemo } from "react"
 import { StockProjectionChart } from "@/components/charts/StockProjectionChart"
-import type { InventoryItem, StockoutAlert } from "@/lib/api"
+import type { InventoryItem, StockoutAlert, PredictionRecord } from "@/lib/api"
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Badge helper
 // ---------------------------------------------------------------------------
-
-function skuKey(item_id: string, store_id: string | null) {
-  return `${item_id}-${store_id ?? ""}`
-}
 
 function StatusBadge({ item, isAlert }: { item: InventoryItem; isAlert: boolean }) {
-  if (isAlert) {
-    return (
-      <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
-        Alerta
-      </span>
-    )
-  }
-  if (item.stock_status === "dead_stock") {
-    return (
-      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
-        Stock Muerto
-      </span>
-    )
-  }
-  if (item.stock_status === "slow_moving") {
-    return (
-      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-700">
-        Mov. Lento
-      </span>
-    )
-  }
-  return (
-    <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700">
-      OK
-    </span>
-  )
+  if (isAlert)
+    return <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">Alerta</span>
+  if (item.stock_status === "dead_stock")
+    return <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">Stock Muerto</span>
+  if (item.stock_status === "slow_moving")
+    return <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-700">Mov. Lento</span>
+  return <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700">OK</span>
+}
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+interface Props {
+  items: InventoryItem[]
+  alerts: StockoutAlert[]
+  allPredictions: PredictionRecord[]
+  predsLoading: boolean
+  onSelectItem?: (item: InventoryItem) => void
 }
 
 // ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
 
-interface Props {
-  items: InventoryItem[]
-  alerts: StockoutAlert[]
-  onSelectItem?: (item: InventoryItem) => void
-}
+export function InventoryProjectionGrid({ items, alerts, allPredictions, predsLoading, onSelectItem }: Props) {
+  const [selectedSku, setSelectedSku] = useState<string | null>(null)
+  const [visibleCount, setVisibleCount] = useState(6)
 
-export function InventoryProjectionGrid({ items, alerts, onSelectItem }: Props) {
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
+  // Agrupar predicciones por item_id
+  const predsByItemId = useMemo(() => {
+    const map: Record<string, PredictionRecord[]> = {}
+    allPredictions.forEach((p) => {
+      if (!map[p.item_id]) map[p.item_id] = []
+      map[p.item_id].push(p)
+    })
+    return map
+  }, [allPredictions])
 
-  // Pre-cargar con SKUs en alerta al montar
-  useEffect(() => {
-    if (alerts.length > 0 && items.length > 0) {
-      const alertKeys = alerts
-        .map((a) => skuKey(a.item_id, a.store_id))
-        .filter((key) => items.some((i) => skuKey(i.item_id, i.store_id) === key))
-      setSelectedKeys(alertKeys)
-    }
-  }, [alerts, items])
-
-  const alertKeySet = new Set(alerts.map((a) => skuKey(a.item_id, a.store_id)))
-
-  const selectedItems = selectedKeys
-    .map((key) => items.find((i) => skuKey(i.item_id, i.store_id) === key))
-    .filter(Boolean) as InventoryItem[]
-
-  const availableItems = items.filter(
-    (i) => !selectedKeys.includes(skuKey(i.item_id, i.store_id))
+  const alertItemIds = useMemo(
+    () => new Set(alerts.map((a) => a.item_id)),
+    [alerts]
   )
 
-  function addSku(key: string) {
-    if (key) setSelectedKeys((prev) => [...prev, key])
-  }
+  // Ordenar: alertas primero, luego el resto
+  const sortedItems = useMemo(
+    () =>
+      [...items].sort((a, b) => {
+        const aA = alertItemIds.has(a.item_id) ? 0 : 1
+        const bA = alertItemIds.has(b.item_id) ? 0 : 1
+        return aA - bA
+      }),
+    [items, alertItemIds]
+  )
 
-  function removeSku(key: string) {
-    setSelectedKeys((prev) => prev.filter((k) => k !== key))
-  }
+  const selectedItem = selectedSku
+    ? sortedItems.find((i) => i.item_id === selectedSku) ?? null
+    : null
+
+  const visibleItems = sortedItems.slice(0, visibleCount)
+  const hasMore = sortedItems.length > visibleCount
 
   return (
     <div className="flex flex-col gap-6">
@@ -89,82 +77,116 @@ export function InventoryProjectionGrid({ items, alerts, onSelectItem }: Props) 
       {/* Toolbar */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          {selectedItems.length === 0
-            ? "No hay SKUs seleccionados"
-            : `Mostrando ${selectedItems.length} SKU${selectedItems.length !== 1 ? "s" : ""}`}
+          {selectedSku
+            ? `SKU seleccionado: ${selectedSku}`
+            : `Mostrando ${Math.min(visibleCount, sortedItems.length)} de ${sortedItems.length} SKUs`}
         </p>
 
-        {availableItems.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4 text-muted-foreground" />
-            <select
-              className="rounded-md border bg-background px-3 py-1.5 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              value=""
-              onChange={(e) => addSku(e.target.value)}
+        <div className="flex items-center gap-2">
+          {selectedSku && (
+            <button
+              onClick={() => setSelectedSku(null)}
+              className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
             >
-              <option value="">Agregar SKU...</option>
-              {availableItems.map((i) => {
-                const key = skuKey(i.item_id, i.store_id)
-                return (
-                  <option key={key} value={key}>
-                    {i.item_id}{i.store_id ? ` — ${i.store_id}` : ""}
-                  </option>
-                )
-              })}
-            </select>
-          </div>
-        )}
+              Ver todos
+            </button>
+          )}
+          <select
+            className="rounded-md border bg-background px-3 py-1.5 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            value={selectedSku ?? ""}
+            onChange={(e) => setSelectedSku(e.target.value || null)}
+          >
+            <option value="">Filtrar por SKU...</option>
+            {sortedItems.map((i) => (
+              <option key={i.item_id} value={i.item_id}>
+                {i.item_id}{i.store_id ? ` — ${i.store_id}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {/* Empty state */}
-      {selectedItems.length === 0 && (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
-          <p className="text-sm text-muted-foreground">
-            No hay SKUs en alerta ni seleccionados.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Usa el selector de arriba para agregar SKUs al grid.
-          </p>
+      {/* Loading */}
+      {predsLoading && (
+        <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+          Cargando forecast...
         </div>
       )}
 
-      {/* Grid de mini charts */}
-      {selectedItems.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {selectedItems.map((item) => {
-            const key = skuKey(item.item_id, item.store_id)
-            const isAlert = alertKeySet.has(key)
-            return (
-              <div
-                key={key}
-                className="cursor-pointer rounded-xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
-                onClick={() => onSelectItem?.(item)}
-              >
-                {/* Cabecera de la card */}
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-card-foreground">
-                      {item.item_id}
-                    </p>
-                    <p className="text-xs text-muted-foreground">{item.store_id ?? "—"}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <StatusBadge item={item} isAlert={isAlert} />
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeSku(key) }}
-                      className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
+      {/* Vista individual — SKU seleccionado */}
+      {!predsLoading && selectedItem && (
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
+          <div className="mb-3 flex items-center gap-3">
+            <p className="text-sm font-semibold text-card-foreground">{selectedItem.item_id}</p>
+            <p className="text-xs text-muted-foreground">{selectedItem.store_id ?? "—"}</p>
+            <StatusBadge item={selectedItem} isAlert={alertItemIds.has(selectedItem.item_id)} />
+          </div>
 
-                {/* Mini gráfica */}
-                <StockProjectionChart item={item} compact />
-              </div>
-            )
-          })}
+          <div className="mb-4 grid grid-cols-3 gap-4 rounded-lg bg-muted/40 px-4 py-3 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Stock disponible</p>
+              <p className="font-semibold">{selectedItem.available_stock.toLocaleString()} uds</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Punto de reorden</p>
+              <p className="font-semibold">
+                {selectedItem.reorder_point != null
+                  ? `${Number(selectedItem.reorder_point).toFixed(0)} uds`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Lead time</p>
+              <p className="font-semibold">{selectedItem.lead_time_days} días</p>
+            </div>
+          </div>
+
+          <StockProjectionChart
+            item={selectedItem}
+            predictions={predsByItemId[selectedItem.item_id]?.slice(0, 30)}
+          />
         </div>
+      )}
+
+      {/* Grid de mini cards */}
+      {!predsLoading && !selectedSku && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {visibleItems.map((item) => {
+              const isAlert = alertItemIds.has(item.item_id)
+              const preds = predsByItemId[item.item_id]?.slice(0, 30)
+              return (
+                <div
+                  key={item.item_id}
+                  className="cursor-pointer rounded-xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
+                  onClick={() => onSelectItem?.(item)}
+                >
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-card-foreground">
+                        {item.item_id}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{item.store_id ?? "—"}</p>
+                    </div>
+                    <StatusBadge item={item} isAlert={isAlert} />
+                  </div>
+                  <StockProjectionChart item={item} compact predictions={preds} />
+                </div>
+              )
+            })}
+          </div>
+
+          {hasMore && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => setVisibleCount((prev) => prev + 6)}
+                className="rounded-lg border px-6 py-2 text-sm text-muted-foreground hover:bg-muted"
+              >
+                Ver más ({sortedItems.length - visibleCount} restantes)
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

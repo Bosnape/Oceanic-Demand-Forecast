@@ -8,6 +8,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { getInventory, getInventoryAlerts, type InventoryItem, type StockoutAlert, type AlertMode } from "@/lib/api"
 import { PackageX, ShoppingCart, TrendingDown, DollarSign, BarChart2, Table2 } from "lucide-react"
 import { InventoryProjectionGrid } from "@/components/charts/InventoryProjectionGrid"
+import { StockProjectionChart } from "@/components/charts/StockProjectionChart"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { getPredictions, type PredictionRecord, type InventoryItem } from "@/lib/api"
 
 type LoadState = "loading" | "ready" | "empty" | "error"
 type ViewMode  = "table" | "projection"
@@ -18,7 +21,25 @@ export default function InventoryPage() {
   const [alertMode, setAlertMode] = useState<AlertMode>("no_data")
   const [state, setState]         = useState<LoadState>("loading")
   const [errorMsg, setErrorMsg]   = useState("")
-  const [viewMode, setViewMode]   = useState<ViewMode>("table")
+  const [viewMode, setViewMode]             = useState<ViewMode>("table")
+  const [allPredictions, setAllPredictions] = useState<PredictionRecord[]>([])
+  const [predsLoading, setPredsLoading]     = useState(false)
+  const [expandedItem, setExpandedItem]     = useState<InventoryItem | null>(null)
+
+  // Predicciones del SKU expandido — sacadas de allPredictions sin nueva llamada
+  const expandedPreds = expandedItem
+    ? allPredictions.filter((p) => p.item_id === expandedItem.item_id).slice(0, 30)
+    : []
+
+  useEffect(() => {
+    if (viewMode === "projection" && allPredictions.length === 0) {
+      setPredsLoading(true)
+      getPredictions()
+        .then(setAllPredictions)
+        .catch(() => setAllPredictions([]))
+        .finally(() => setPredsLoading(false))
+    }
+  }, [viewMode])
 
   useEffect(() => {
     Promise.all([
@@ -165,6 +186,9 @@ export default function InventoryPage() {
           <InventoryProjectionGrid
             items={items}
             alerts={alerts}
+            allPredictions={allPredictions}
+            predsLoading={predsLoading}
+            onSelectItem={setExpandedItem}
           />
         )}
         {state === "empty" && (
@@ -185,6 +209,45 @@ export default function InventoryPage() {
           </div>
         )}
       </section>
+
+      {/* Dialog — gráfica expandida con Prophet real */}
+      <Dialog open={!!expandedItem} onOpenChange={(open) => { if (!open) setExpandedItem(null) }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {expandedItem?.item_id} — {expandedItem?.store_id ?? ""}
+            </DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              Proyección de stock próximos 30 días · Demanda real día a día (Prophet)
+            </p>
+          </DialogHeader>
+
+          <div className="mt-2 grid grid-cols-3 gap-4 rounded-lg bg-muted/40 px-4 py-3 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Stock disponible</p>
+              <p className="font-semibold">{expandedItem?.available_stock.toLocaleString()} uds</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Punto de reorden</p>
+              <p className="font-semibold">
+                {expandedItem?.reorder_point != null
+                  ? `${Number(expandedItem.reorder_point).toFixed(0)} uds`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Lead time</p>
+              <p className="font-semibold">{expandedItem?.lead_time_days} días</p>
+            </div>
+          </div>
+
+          <div className="mt-2">
+            {expandedItem && (
+              <StockProjectionChart item={expandedItem} predictions={expandedPreds} />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
     </DashboardLayout>
   )
