@@ -1,5 +1,6 @@
-from sqlalchemy import Boolean, Column, Date, ForeignKey, Integer, Numeric, String, TIMESTAMP, text
+from sqlalchemy import Boolean, Column, Date, ForeignKey, Integer, Numeric, String, TIMESTAMP, Text, Float, DateTime, text
 from sqlalchemy.dialects.postgresql import JSONB
+from datetime import datetime
 
 from .base import Base
 
@@ -115,3 +116,36 @@ class ModelMetrics(Base):
     seasonality_mode   = Column(String(20))            # 'additive' | 'multiplicative'
 
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+
+
+# =============================================================================
+# US-20 — Audit Log Models
+# =============================================================================
+
+class UploadLog(Base):
+    """Registro de cada archivo subido via /upload-sales o /upload-inventory."""
+    __tablename__ = "upload_logs"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    filename          = Column(String(255), nullable=False)
+    file_type         = Column(String(50), nullable=False)   # "sales" | "inventory"
+    upload_date       = Column(DateTime, default=datetime.utcnow, nullable=False)
+    status            = Column(String(50), nullable=False)   # "success" | "failed"
+    records_processed = Column(Integer, nullable=True)
+    error_message     = Column(Text, nullable=True)
+
+
+class ModelExecutionLog(Base):
+    """Registro de cada ejecución del pipeline Prophet (una fila por run completo)."""
+    __tablename__ = "model_execution_logs"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    execution_date   = Column(DateTime, default=datetime.utcnow, nullable=False)
+    status           = Column(String(50), nullable=False)   # "success" | "failed"
+    skus_trained     = Column(Integer, nullable=True)
+    avg_mae          = Column(Float, nullable=True)
+    avg_rmse         = Column(Float, nullable=True)
+    avg_mape         = Column(Float, nullable=True)
+    avg_coverage_ic  = Column(Float, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
+    error_message    = Column(Text, nullable=True)

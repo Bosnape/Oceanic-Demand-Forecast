@@ -6,6 +6,7 @@ import itertools
 import warnings
 import os
 import sys
+import time
 from pathlib import Path
 
 from matplotlib.patches import Patch
@@ -18,7 +19,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy.orm import Session
 from database.database import SessionLocal
-from database.models import Prediction, Company, ModelMetrics
+from database.models import Prediction, Company, ModelMetrics, ModelExecutionLog
 
 warnings.filterwarnings('ignore')
 
@@ -76,10 +77,9 @@ def plot_daily_sales(data):
 
 def plot_sku_sample(data):
     """Sales evolution for 6 SKUs — mix of stable and chaotic patterns."""
-    # 3 best predicted (low MAE relative) + 3 high volatility
     sample_skus = [
-        'FOODS_3_586', 'FOODS_3_252', 'FOODS_3_555',  # stable pattern
-        'FOODS_3_120', 'FOODS_3_681', 'HOBBIES_1_348'  # chaotic pattern
+        'FOODS_3_586', 'FOODS_3_252', 'FOODS_3_555',
+        'FOODS_3_120', 'FOODS_3_681', 'HOBBIES_1_348'
     ]
 
     data['year_month'] = data['date'].dt.to_period('M')
@@ -218,13 +218,8 @@ def hyperparameter_tuning(df_train, holidays_df):
 
     n_days = (df_train['ds'].max() - df_train['ds'].min()).days if len(df_train) > 1 else 0
 
-    # Horizon is fixed at 90 days — matches our forecast period.
-    # Initial scales with available data but is capped at the original 1460 days.
-    # A valid CV fold requires: initial + period + horizon ≤ n_days.
-    # With period=horizon=90 that means initial ≤ n_days - 180.
-    # We also enforce initial ≥ 180 (2× horizon) for a meaningful training window.
     HORIZON_DAYS = 90
-    initial_days = min(1460, n_days - 2 * HORIZON_DAYS)  # leaves room for one full fold
+    initial_days = min(1460, n_days - 2 * HORIZON_DAYS)
 
     if initial_days < 180:
         print(f"Skipping CV tuning ({n_days} days of pilot data) — using default parameters.\n")
@@ -296,7 +291,6 @@ def train_all_skus(data, holidays_df, best_params, cutoff, periods=90):
                 'df_full': df_sku
             }
 
-            # Only evaluate if there is test data (tuning mode); skip in production mode
             if len(df_test) > 0:
                 mae, rmse, mae_rel = evaluate(forecast, df_test)
                 resultados.append({
@@ -371,7 +365,6 @@ def plot_aggregated_forecast(agg, real_agg, cutoff):
     real_test   = real_agg[real_agg['ds'] >  cutoff]
     forecast_period = agg[agg['ds'] > cutoff]
 
-    # Context: last 180 days of train
     train_ctx = real_train[real_train['ds'] >= real_train['ds'].max() - pd.Timedelta(days=180)]
 
     fig, ax = plt.subplots(figsize=(16, 5))
@@ -412,7 +405,6 @@ def plot_metrics_summary(df_metrics):
     ax.tick_params(axis='x', rotation=90, labelsize=7)
     ax.legend()
 
-    # Color legend
     legend_elements = [
         Patch(facecolor='steelblue', label='Good (≤30%)'),
         Patch(facecolor='goldenrod', label='Moderate (30-60%)'),
@@ -434,13 +426,11 @@ def save_predictions_to_db(forecasts, company_id=1):
     """
     Persist forecast results to the prediction table.
     Deletes existing predictions for the company and inserts the new batch in one
-    bulk operation. All rows in a single batch share the same created_at timestamp,
-    which is used by GET /api/predictions/status as the last_run_at signal.
+    bulk operation.
     """
     db: Session = SessionLocal()
 
     try:
-        # Create demo company if it doesn't exist
         company = db.query(Company).filter(Company.id == company_id).first()
         if not company:
             company = Company(name="OCEANIC Demo Company")
@@ -449,7 +439,6 @@ def save_predictions_to_db(forecasts, company_id=1):
             db.refresh(company)
             company_id = company.id
 
-        # Delete existing predictions for this company
         db.query(Prediction).filter(Prediction.company_id == company_id).delete()
         db.commit()
 
@@ -489,11 +478,6 @@ def save_predictions_to_db(forecasts, company_id=1):
 def save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id):
     """
     Compute and persist accuracy metrics for each SKU.
-
-    Uses the in-sample fitted values for the last tuning_cutoff_days of historical
-    data as the validation window. No extra training run is needed — the full-data
-    models already contain fitted values for all historical dates.
-
     Saves one row per SKU + one aggregate row (item_id = NULL).
     """
     db: Session = SessionLocal()
@@ -510,7 +494,6 @@ def save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id):
             df_full  = content['df_full']
             df_train = content['df_train']
 
-            # Validation window: last N days of the historical data
             df_val = df_full[df_full['ds'] > validation_start].copy()
             if len(df_val) < 7:
                 continue
@@ -559,9 +542,62 @@ def save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id):
         sku_count = len(records) - 1 if records else 0
         print(f"Model metrics saved — {sku_count} SKUs + 1 aggregate row")
 
+        return all_sku_stats  # US-20: retornamos para usarlas en el execution log
+
     except Exception as e:
         db.rollback()
         print(f"Error saving model metrics: {e}")
+        return []
+    finally:
+        db.close()
+
+
+# =============================================================================
+# Section 10: Save Model Execution Log (US-20)
+# =============================================================================
+
+def save_model_execution_log(
+    status: str,
+    skus_trained: int,
+    duration_seconds: float,
+    all_sku_stats: list,
+    error_message: str = None,
+):
+    """
+    US-20 — Persiste una fila en model_execution_logs con el resumen del pipeline.
+    Una fila por ejecución completa del pipeline (no por SKU).
+    """
+    db: Session = SessionLocal()
+    try:
+        avg_mae         = None
+        avg_rmse        = None
+        avg_mape        = None
+        avg_coverage_ic = None
+
+        if all_sku_stats:
+            avg_mae         = round(float(np.mean([s['mae']         for s in all_sku_stats])), 4)
+            avg_rmse        = round(float(np.mean([s['rmse']        for s in all_sku_stats])), 4)
+            avg_coverage_ic = round(float(np.mean([s['coverage_ic'] for s in all_sku_stats])), 2)
+            valid_mapes     = [s['mape'] for s in all_sku_stats if s['mape'] is not None]
+            avg_mape        = round(float(np.mean(valid_mapes)), 2) if valid_mapes else None
+
+        log_entry = ModelExecutionLog(
+            status=status,
+            skus_trained=skus_trained,
+            avg_mae=avg_mae,
+            avg_rmse=avg_rmse,
+            avg_mape=avg_mape,
+            avg_coverage_ic=avg_coverage_ic,
+            duration_seconds=round(duration_seconds, 2),
+            error_message=error_message,
+        )
+        db.add(log_entry)
+        db.commit()
+        print(f"Execution log saved — status: {status} | duration: {duration_seconds:.1f}s")
+
+    except Exception as e:
+        db.rollback()
+        print(f"Error saving execution log: {e}")
     finally:
         db.close()
 
@@ -577,42 +613,67 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
     Trains on ALL historical data and forecasts the next 90 days.
     """
     FORECAST_DAYS = 90
+    pipeline_start = time.time()  # US-20: cronómetro del pipeline completo
 
-    holidays_df = build_holidays(df)
+    try:
+        holidays_df = build_holidays(df)
 
-    # Tuning cutoff: reserve 20% of the dataset for pilot CV, capped at 90 days.
-    # This keeps df_pilot_train non-empty even for short test files.
-    data_span_days = (df['date'].max() - df['date'].min()).days
-    tuning_cutoff_days = max(7, min(90, int(data_span_days * 0.2)))
-    tuning_cutoff = df['date'].max() - pd.Timedelta(days=tuning_cutoff_days)
-    full_cutoff   = df['date'].max()  # train on everything
+        # Tuning cutoff: reserve 20% of the dataset for pilot CV, capped at 90 days.
+        data_span_days = (df['date'].max() - df['date'].min()).days
+        tuning_cutoff_days = max(7, min(90, int(data_span_days * 0.2)))
+        tuning_cutoff = df['date'].max() - pd.Timedelta(days=tuning_cutoff_days)
+        full_cutoff   = df['date'].max()  # train on everything
 
-    # Pilot SKU tuning (uses tuning_cutoff to have test data for CV)
-    pilot_sku      = df.groupby('item_id')['units_sold'].sum().idxmax()
-    df_pilot       = prepare_prophet_df(df, pilot_sku)
-    df_pilot_train = df_pilot[df_pilot['ds'] <= tuning_cutoff]
+        # Pilot SKU tuning
+        pilot_sku      = df.groupby('item_id')['units_sold'].sum().idxmax()
+        df_pilot       = prepare_prophet_df(df, pilot_sku)
+        df_pilot_train = df_pilot[df_pilot['ds'] <= tuning_cutoff]
 
-    best_params = hyperparameter_tuning(df_pilot_train, holidays_df)
+        best_params = hyperparameter_tuning(df_pilot_train, holidays_df)
 
-    # Train all SKUs on full data → forecast next 90 days
-    df_metrics, forecasts = train_all_skus(df, holidays_df,
-                                           best_params, full_cutoff, FORECAST_DAYS)
+        # Train all SKUs on full data → forecast next 90 days
+        df_metrics, forecasts = train_all_skus(df, holidays_df,
+                                               best_params, full_cutoff, FORECAST_DAYS)
 
-    # Save predictions to database
-    save_predictions_to_db(forecasts, company_id=company_id)
+        # Save predictions to database
+        save_predictions_to_db(forecasts, company_id=company_id)
 
-    # Compute and persist accuracy metrics (in-sample validation window)
-    save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id)
+        # Compute and persist accuracy metrics — retorna all_sku_stats para el log
+        all_sku_stats = save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id)
 
-    print("\n── Pipeline completed ───────────────────────────────────────")
-    print(f"  SKUs trained:              {len(forecasts)}")
-    if not df_metrics.empty and 'mae_relative_%' in df_metrics.columns:
-        df_valid = df_metrics[df_metrics['avg_sales_test'] >= 5]
-        print(f"  SKUs with demand ≥5/day:   {len(df_valid)}")
-        print(f"  Avg MAE relative:          {df_valid['mae_relative_%'].mean():.1f}%")
-    else:
-        print("  (production mode — metrics not computed)")
-    print("────────────────────────────────────────────────────────────")
+        duration = time.time() - pipeline_start
+
+        # US-20 — Registrar ejecución exitosa
+        save_model_execution_log(
+            status="success",
+            skus_trained=len(forecasts),
+            duration_seconds=duration,
+            all_sku_stats=all_sku_stats,
+        )
+
+        print("\n── Pipeline completed ───────────────────────────────────────")
+        print(f"  SKUs trained:              {len(forecasts)}")
+        print(f"  Duration:                  {duration:.1f}s")
+        if not df_metrics.empty and 'mae_relative_%' in df_metrics.columns:
+            df_valid = df_metrics[df_metrics['avg_sales_test'] >= 5]
+            print(f"  SKUs with demand ≥5/day:   {len(df_valid)}")
+            print(f"  Avg MAE relative:          {df_valid['mae_relative_%'].mean():.1f}%")
+        else:
+            print("  (production mode — metrics not computed)")
+        print("────────────────────────────────────────────────────────────")
+
+    except Exception as e:
+        duration = time.time() - pipeline_start
+
+        # US-20 — Registrar ejecución fallida
+        save_model_execution_log(
+            status="failed",
+            skus_trained=0,
+            duration_seconds=duration,
+            all_sku_stats=[],
+            error_message=str(e),
+        )
+        raise  # re-raise para que run_prophet_background marque DataSource como "failed"
 
 
 # =============================================================================
@@ -621,28 +682,23 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
 
 if __name__ == '__main__':
 
-    # Ensure plots directory exists
     os.makedirs(PLOTS_DIR, exist_ok=True)
     
-    # Paths
     DATA_PATH     = 'reference_sales.csv'
     CUTOFF_DAYS   = 90
     FORECAST_DAYS = 90
 
-    # Load
     data        = load_data(DATA_PATH)
     holidays_df = build_holidays(data)
 
     cutoff = data['date'].max() - pd.Timedelta(days=CUTOFF_DAYS)
 
-    # Exploratory plots
     print("Generating exploratory plots...")
     plot_daily_sales(data)
     plot_sku_sample(data)
     plot_weekly_seasonality(data)
     print()
 
-    # Pilot SKU tuning
     pilot_sku = data.groupby('item_id')['units_sold'].sum().idxmax()
     print(f"Pilot SKU: {pilot_sku}")
     df_pilot       = prepare_prophet_df(data, pilot_sku)
@@ -650,11 +706,9 @@ if __name__ == '__main__':
 
     best_params = hyperparameter_tuning(df_pilot_train, holidays_df)
 
-    # Train all SKUs
     df_metrics, forecasts = train_all_skus(data, holidays_df,
                                            best_params, cutoff, FORECAST_DAYS)
 
-    # Results summary
     df_valid = df_metrics[df_metrics['avg_sales_test'] >= 5]
     print("\n── Model Performance Summary ────────────────────────────────")
     print(f"  SKUs trained:              {len(df_metrics)}")
@@ -665,14 +719,11 @@ if __name__ == '__main__':
     print(f"  Difficult SKUs (>60%):     {len(df_valid[df_valid['mae_relative_%'] > 60])}")
     print("────────────────────────────────────────────────────────────")
 
-    # Aggregated forecast
     agg, real_agg, cutoff = aggregate_forecast(forecasts, data, cutoff)
 
-    # Forecast and metrics plots
     plot_aggregated_forecast(agg, real_agg, cutoff)
     plot_metrics_summary(df_metrics)
 
-    # Save predictions to database
     save_predictions_to_db(forecasts)
 
     print(f"\nDone. All plots saved to '{PLOTS_DIR}/'")

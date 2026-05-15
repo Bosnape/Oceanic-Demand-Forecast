@@ -15,7 +15,11 @@ from api.validation import validate_sales_dataframe, validate_inventory_datafram
 from demand_forecast.prophet_demand_forecast import run_pipeline
 
 from database.database import get_db, SessionLocal, init_db
-from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot, InventoryAnalysis, ModelMetrics
+from database.models import (
+    Company, DataSource, SalesTransaction, Prediction,
+    InventorySnapshot, InventoryAnalysis, ModelMetrics,
+    UploadLog, ModelExecutionLog,                          # US-20
+)
 from inventory.inventory_analysis import run_inventory_analysis
 
 
@@ -191,6 +195,16 @@ async def upload_sales(
         db.commit()
         transactions = records
 
+        # US-20 — Registrar carga exitosa
+        upload_log = UploadLog(
+            filename=file.filename,
+            file_type="sales",
+            status="success",
+            records_processed=len(transactions),
+        )
+        db.add(upload_log)
+        db.commit()
+
         # Step 5: Trigger Prophet pipeline in background
         background_tasks.add_task(
             run_prophet_background,
@@ -199,8 +213,12 @@ async def upload_sales(
         )
 
     except ValueError as error:
+        # US-20 — Registrar carga fallida
+        _log_failed_upload(db, file.filename, "sales", str(error))
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
+        # US-20 — Registrar carga fallida
+        _log_failed_upload(db, file.filename, "sales", str(error))
         raise HTTPException(status_code=500, detail=f"Error processing dataset: {error}") from error
 
     return {
@@ -291,12 +309,26 @@ async def upload_inventory(
         db.commit()
         snapshots = inv_records
 
-        # Run inventory analysis immediately with whatever sales/predictions are already in the DB (may produce "pending" if none exist yet)
+        # US-20 — Registrar carga exitosa
+        upload_log = UploadLog(
+            filename=file.filename,
+            file_type="inventory",
+            status="success",
+            records_processed=len(snapshots),
+        )
+        db.add(upload_log)
+        db.commit()
+
+        # Run inventory analysis immediately with whatever sales/predictions are already in the DB
         run_inventory_analysis(company_id, db)
 
     except ValueError as error:
+        # US-20 — Registrar carga fallida
+        _log_failed_upload(db, file.filename, "inventory", str(error))
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
+        # US-20 — Registrar carga fallida
+        _log_failed_upload(db, file.filename, "inventory", str(error))
         raise HTTPException(status_code=500, detail=f"Error processing inventory file: {error}") from error
 
     return {
@@ -311,6 +343,77 @@ async def upload_inventory(
             "issues_count": len(result.issues),
         },
     }
+
+# =============================================================================
+# GET /api/logs/uploads  (US-20)
+# =============================================================================
+
+@app.get(
+    "/api/logs/uploads",
+    tags=["Audit Logs"],
+    summary="Get data upload history",
+    description="Returns all recorded data upload events (sales and inventory), ordered by most recent first.",
+)
+async def get_upload_logs(db: Session = Depends(get_db)):
+    try:
+        logs = (
+            db.query(UploadLog)
+            .order_by(UploadLog.upload_date.desc())
+            .limit(200)
+            .all()
+        )
+        return [
+            {
+                "id": log.id,
+                "filename": log.filename,
+                "file_type": log.file_type,
+                "upload_date": log.upload_date.isoformat(),
+                "status": log.status,
+                "records_processed": log.records_processed,
+                "error_message": log.error_message,
+            }
+            for log in logs
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching upload logs: {e}")
+
+
+# =============================================================================
+# GET /api/logs/model-executions  (US-20)
+# =============================================================================
+
+@app.get(
+    "/api/logs/model-executions",
+    tags=["Audit Logs"],
+    summary="Get ML model execution history",
+    description="Returns all recorded Prophet pipeline executions with accuracy metrics, ordered by most recent first.",
+)
+async def get_model_execution_logs(db: Session = Depends(get_db)):
+    try:
+        logs = (
+            db.query(ModelExecutionLog)
+            .order_by(ModelExecutionLog.execution_date.desc())
+            .limit(200)
+            .all()
+        )
+        return [
+            {
+                "id": log.id,
+                "execution_date": log.execution_date.isoformat(),
+                "status": log.status,
+                "skus_trained": log.skus_trained,
+                "avg_mae": float(log.avg_mae) if log.avg_mae is not None else None,
+                "avg_rmse": float(log.avg_rmse) if log.avg_rmse is not None else None,
+                "avg_mape": float(log.avg_mape) if log.avg_mape is not None else None,
+                "avg_coverage_ic": float(log.avg_coverage_ic) if log.avg_coverage_ic is not None else None,
+                "duration_seconds": float(log.duration_seconds) if log.duration_seconds is not None else None,
+                "error_message": log.error_message,
+            }
+            for log in logs
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching model execution logs: {e}")
+
 
 # =============================================================================
 # GET /api/predictions/status
@@ -752,7 +855,6 @@ async def get_inventory_alerts(db: Session = Depends(get_db)):
 
         else:
             # Historical fallback: reuse days_of_stock already stored in inventory_analysis.
-            # avg_daily_demand = inventory_on_hand / days_of_stock (reverse formula).
             snapshot_ids = [s.id for s in snapshots]
             analyses = (
                 db.query(InventoryAnalysis)
@@ -838,8 +940,6 @@ async def get_inventory_alerts(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error calculating stockout alerts: {e}")
 
 
-
-
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -855,3 +955,19 @@ def parse_uploaded_file(file: UploadFile) -> pd.DataFrame:
             raise ValueError("Unsupported format. Use CSV or Excel (.xlsx, .xls)")
     except Exception as error:
         raise ValueError(f"Could not process file: {error}") from error
+
+
+def _log_failed_upload(db: Session, filename: str, file_type: str, error_message: str):
+    """US-20 — Helper para registrar una carga fallida sin hacer raise."""
+    try:
+        upload_log = UploadLog(
+            filename=filename,
+            file_type=file_type,
+            status="failed",
+            error_message=error_message,
+        )
+        db.add(upload_log)
+        db.commit()
+    except Exception:
+        # No interrumpir el flujo principal si el log mismo falla
+        db.rollback()
