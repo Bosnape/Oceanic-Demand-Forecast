@@ -100,7 +100,7 @@ Interactive docs at `http://localhost:8000/docs`
 ```bash
 cd frontend/src
 npm install
-npm run dev                    # http://localhost:3000
+npm run dev  # http://localhost:3000
 ```
 
 ---
