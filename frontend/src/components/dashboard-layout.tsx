@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useCallback, type ReactNode } from "react"
 import { AppSidebar } from "@/components/app-sidebar"
 import { NotificationBell } from "@/components/notification-bell"
 import { PipelineToast } from "@/components/pipeline-toast"
-import { getPredictionsStatus, getInventoryAlerts, type PredictionsStatus } from "@/lib/api"
+import { getPredictionsStatus, getInventoryAlerts, getDemandAlerts, type PredictionsStatus } from "@/lib/api"
 import { AlertTriangle, X } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
@@ -108,6 +108,8 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
     typeof window !== "undefined" && sessionStorage.getItem("oceanic-inv-alert-dismissed") === "1"
   )
 
+  const [demandAlertCount, setDemandAlertCount] = useState(0)
+
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
   }, [])
@@ -131,6 +133,15 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
       }
     } catch {
       // Silent — don't break layout if inventory endpoint is unavailable
+    }
+  }, [])
+
+  const fetchDemandAlerts = useCallback(async () => {
+    try {
+      const data = await getDemandAlerts()
+      setDemandAlertCount(data.alerts.length)
+    } catch {
+      // Silent — no romper el layout si el endpoint no está disponible
     }
   }, [])
 
@@ -191,13 +202,16 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
   // Initial fetch on mount — inventory alerts
   // 150ms delay so the first render paints before the toast slides in
   useEffect(() => {
-    const t = setTimeout(fetchInventoryAlerts, 150)
+    const t = setTimeout(() => {
+      fetchInventoryAlerts()
+      fetchDemandAlerts()
+    }, 150)
     return () => {
       clearTimeout(t)
       if (invAutoDismissRef.current) clearTimeout(invAutoDismissRef.current)
       if (invProgressiveRef.current)  clearTimeout(invProgressiveRef.current)
     }
-  }, [fetchInventoryAlerts])
+  }, [fetchInventoryAlerts, fetchDemandAlerts])
 
   // Re-fetch inventory alerts when pipeline finishes with new predictions
   useEffect(() => {
@@ -206,12 +220,15 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
       invDismissedRef.current = false
       setInvToastDismissed(false)
       fetchInventoryAlerts()
+      fetchDemandAlerts()
     }
     window.addEventListener("pipeline:dataready", handler)
+    window.addEventListener("pipeline:refetch", handler)
     return () => {
       window.removeEventListener("pipeline:dataready", handler)
+      window.removeEventListener("pipeline:refetch", handler)
     }
-  }, [fetchInventoryAlerts])
+  }, [fetchInventoryAlerts, fetchDemandAlerts])
 
   // Listen for trigger from data-ingestion page after upload — pipeline
   useEffect(() => {
@@ -270,6 +287,7 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
                   toastDismissed
                 }
                 inventoryAlertCount={invAlertTotal}
+                demandAlertCount={demandAlertCount}
                 onClick={() => {
                   // Bell click → re-show inventory alert toast (primary) …
                   if (invAlertTotal > 0) {

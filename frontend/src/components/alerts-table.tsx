@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { AlertTriangle, TrendingDown, BarChart2, History, ShoppingCart, HelpCircle } from "lucide-react"
+import { AlertTriangle, TrendingDown, BarChart2, History, ShoppingCart, HelpCircle, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getInventoryAlerts, type StockoutAlert, type AlertMode } from "@/lib/api"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
@@ -194,6 +194,7 @@ export function AlertsTable() {
   const [modeMessage, setModeMessage] = useState("")
   const [loading, setLoading]     = useState(true)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [expanded, setExpanded]   = useState(false)
 
   useEffect(() => {
     const handler = () => setRefreshKey((k) => k + 1)
@@ -207,6 +208,7 @@ export function AlertsTable() {
 
   useEffect(() => {
     setLoading(true)
+    setExpanded(false)
     getInventoryAlerts()
       .then((res) => {
         setAlerts(res.alerts)
@@ -220,6 +222,9 @@ export function AlertsTable() {
       .finally(() => setLoading(false))
   }, [refreshKey])
 
+  const VISIBLE_LIMIT = 3
+  const visibleAlerts = expanded ? alerts : alerts.slice(0, VISIBLE_LIMIT)
+  const hiddenCount   = alerts.length - VISIBLE_LIMIT
   const criticalCount = alerts.filter((a) => a.stock_status === "critical").length
 
   return (
@@ -271,12 +276,24 @@ export function AlertsTable() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {alerts.map((alert) => (
+                  {visibleAlerts.map((alert) => (
                     <AlertRow key={`${alert.item_id}-${alert.store_id}`} alert={alert} />
                   ))}
                 </TableBody>
               </Table>
             </div>
+            {hiddenCount > 0 && (
+              <button
+                onClick={() => setExpanded((e) => !e)}
+                className="mt-3 flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+              >
+                {expanded ? (
+                  <>Ver menos <ChevronUp className="h-3 w-3" /></>
+                ) : (
+                  <>Ver {hiddenCount} más <ChevronDown className="h-3 w-3" /></>
+                )}
+              </button>
+            )}
           </>
         )}
       </CardContent>

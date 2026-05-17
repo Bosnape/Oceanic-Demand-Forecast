@@ -7,11 +7,14 @@ interface NotificationBellProps {
   hasActiveNotification: boolean
   /** Shows a numeric badge for inventory stockout alerts */
   inventoryAlertCount?: number
+  /** Shows additional count for demand deviation alerts */
+  demandAlertCount?: number
   onClick: () => void
 }
 
-export function NotificationBell({ hasActiveNotification, inventoryAlertCount = 0, onClick }: NotificationBellProps) {
-  const showCount  = inventoryAlertCount > 0
+export function NotificationBell({ hasActiveNotification, inventoryAlertCount = 0, demandAlertCount = 0, onClick }: NotificationBellProps) {
+  const totalCount = inventoryAlertCount + demandAlertCount
+  const showCount  = totalCount > 0
   const showDot    = !showCount && hasActiveNotification
 
   return (
@@ -22,10 +25,10 @@ export function NotificationBell({ hasActiveNotification, inventoryAlertCount = 
     >
       <Bell className="h-4 w-4" />
 
-      {/* Numeric badge — inventory stockout alerts */}
+      {/* Numeric badge — combined inventory + demand alerts */}
       {showCount && (
         <span className="absolute -top-0.5 -right-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold leading-none text-white">
-          {inventoryAlertCount > 9 ? "9+" : inventoryAlertCount}
+          {totalCount > 9 ? "9+" : totalCount}
         </span>
       )}
 
