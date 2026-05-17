@@ -937,6 +937,140 @@ async def get_inventory_alerts(db: Session = Depends(get_db)):
 
 
 # =============================================================================
+# GET /api/demand-alerts
+# =============================================================================
+
+DEMAND_WARNING_THRESHOLD  = 0.25  # 25 % — desviación moderada (atención)
+DEMAND_CRITICAL_THRESHOLD = 0.40  # 40 % — desviación significativa (crítico)
+
+
+@app.get(
+    "/api/demand-alerts",
+    tags=["Predictions"],
+    summary="Get demand deviation alerts per SKU",
+    description=(
+        "Compares the average predicted demand for the next 30 days against the average "
+        "historical sales for the last 30 days per SKU. "
+        f"Returns SKUs with deviation ≥{int(DEMAND_WARNING_THRESHOLD * 100)}% (warning) "
+        f"or ≥{int(DEMAND_CRITICAL_THRESHOLD * 100)}% (critical). "
+        "Direction is 'surge' when forecast > historical, 'drop' otherwise."
+    ),
+)
+async def get_demand_alerts(db: Session = Depends(get_db)):
+    """Return SKUs with significant demand deviation (forecast vs recent historical)."""
+    try:
+        from sqlalchemy import func as sqlfunc
+        from datetime import timedelta
+
+        company = db.query(Company).order_by(Company.id.asc()).first()
+        if not company:
+            return {"alerts": [], "message": "No hay datos disponibles."}
+
+        today = db.query(sqlfunc.max(SalesTransaction.date)).filter(
+            SalesTransaction.company_id == company.id
+        ).scalar()
+
+        if not today:
+            return {"alerts": [], "message": "No hay ventas históricas registradas."}
+
+        historical_start = today - timedelta(days=30)
+
+        # ------------------------------------------------------------------
+        # Average daily historical sales per SKU (last 30 days)
+        # ------------------------------------------------------------------
+        historical_rows = (
+            db.query(
+                SalesTransaction.item_id,
+                sqlfunc.avg(SalesTransaction.units_sold).label("avg_daily"),
+            )
+            .filter(
+                SalesTransaction.company_id == company.id,
+                SalesTransaction.date >= historical_start,
+                SalesTransaction.date <= today,
+            )
+            .group_by(SalesTransaction.item_id)
+            .all()
+        )
+
+        if not historical_rows:
+            return {"alerts": [], "message": "No hay ventas en los últimos 30 días."}
+
+        historical_avg: dict[str, float] = {
+            row.item_id: float(row.avg_daily) for row in historical_rows
+        }
+
+        # ------------------------------------------------------------------
+        # Average daily forecast per SKU (next 30 days from earliest forecast date)
+        # ------------------------------------------------------------------
+        forecast_start = db.query(sqlfunc.min(Prediction.forecast_date)).filter(
+            Prediction.company_id == company.id
+        ).scalar()
+
+        if not forecast_start:
+            return {"alerts": [], "message": "No hay pronóstico disponible. Sube datos de ventas primero."}
+
+        forecast_end = forecast_start + timedelta(days=30)
+
+        forecast_rows = (
+            db.query(
+                Prediction.item_id,
+                sqlfunc.avg(Prediction.predicted_demand).label("avg_daily"),
+            )
+            .filter(
+                Prediction.company_id == company.id,
+                Prediction.forecast_date >= forecast_start,
+                Prediction.forecast_date <= forecast_end,
+            )
+            .group_by(Prediction.item_id)
+            .all()
+        )
+
+        forecast_avg: dict[str, float] = {
+            row.item_id: float(row.avg_daily) for row in forecast_rows
+        }
+
+        # ------------------------------------------------------------------
+        # Build alerts — only SKUs that exceed the warning threshold
+        # ------------------------------------------------------------------
+        alerts = []
+        for item_id, hist_avg in historical_avg.items():
+            if hist_avg <= 0 or item_id not in forecast_avg:
+                continue
+
+            fore_avg = forecast_avg[item_id]
+            deviation = (fore_avg - hist_avg) / hist_avg
+            abs_deviation = abs(deviation)
+
+            if abs_deviation < DEMAND_WARNING_THRESHOLD:
+                continue
+
+            severity = "critical" if abs_deviation >= DEMAND_CRITICAL_THRESHOLD else "warning"
+
+            alerts.append({
+                "item_id": item_id,
+                "historical_avg": round(hist_avg, 2),
+                "forecast_avg": round(fore_avg, 2),
+                "deviation_pct": round(deviation * 100, 1),
+                "direction": "surge" if deviation > 0 else "drop",
+                "severity": severity,
+            })
+
+        alerts.sort(key=lambda x: abs(x["deviation_pct"]), reverse=True)
+
+        return {
+            "alerts": alerts,
+            "message": (
+                "Comparando pronóstico (próximos 30 días) vs ventas históricas (últimos 30 días). "
+                f"Atención ≥{int(DEMAND_WARNING_THRESHOLD * 100)}% · "
+                f"Crítico ≥{int(DEMAND_CRITICAL_THRESHOLD * 100)}%."
+            ),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating demand alerts: {e}")
+
+
+# =============================================================================
 # Helpers
 # =============================================================================
 
