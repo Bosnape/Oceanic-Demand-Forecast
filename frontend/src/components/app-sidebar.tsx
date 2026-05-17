@@ -14,6 +14,7 @@ import {
   Activity,
   Package,
   TrendingUp,
+  ClipboardList,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -25,6 +26,7 @@ const navItems = [
   { href: "/ventas-historicas", label: "Ventas Históricas", icon: TrendingUp },
   { href: "/inventory", label: "Inventario", icon: Package },
   { href: "/data-ingestion", label: "Ingesta de Datos", icon: Upload },
+  { href: "/logs", label: "Audit Logs", icon: ClipboardList },
 ]
 
 export function AppSidebar() {

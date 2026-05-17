@@ -148,30 +148,30 @@ export default function InventoryPage() {
       {state === "ready" && (
         <div className="mb-6 flex items-center justify-between">
           <div className="flex gap-2">
-          <button
-            onClick={() => setViewMode("table")}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-              viewMode === "table"
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            <Table2 className="h-4 w-4" />
-            Vista Tabla
-          </button>
-          <button
-            onClick={() => setViewMode("projection")}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-              viewMode === "projection"
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            <BarChart2 className="h-4 w-4" />
-            Vista Proyección
-          </button>
+            <button
+              onClick={() => setViewMode("table")}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "table"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              <Table2 className="h-4 w-4" />
+              Vista Tabla
+            </button>
+            <button
+              onClick={() => setViewMode("projection")}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "projection"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              <BarChart2 className="h-4 w-4" />
+              Vista Proyección
+            </button>
           </div>
-          
+
           <Button
             variant="outline"
             className="gap-2"
@@ -296,26 +296,28 @@ function StatCard({
 }) {
   return (
     <div className="rounded-xl border bg-card p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-muted-foreground">{label}</p>
-        <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${iconBg} ${iconColor}`}>
+      <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <p
+            className={
+              highlight === "destructive"
+                ? "text-2xl font-bold text-destructive"
+                : highlight === "warning"
+                ? "text-2xl font-bold text-warning"
+                : highlight === "violet"
+                ? "text-2xl font-bold text-violet-500"
+                : "text-2xl font-bold tracking-tight text-card-foreground"
+            }
+          >
+            {value}
+          </p>
+          <p className="text-xs text-muted-foreground">{sub}</p>
+        </div>
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconBg} ${iconColor}`}>
           {icon}
         </div>
       </div>
-      <p
-        className={
-          highlight === "destructive"
-            ? "mt-2 text-2xl font-bold text-destructive"
-            : highlight === "warning"
-            ? "mt-2 text-2xl font-bold text-warning"
-            : highlight === "violet"
-            ? "mt-2 text-2xl font-bold text-violet-500"
-            : "mt-2 text-2xl font-bold tracking-tight text-card-foreground"
-        }
-      >
-        {value}
-      </p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
     </div>
   )
 }

@@ -34,16 +34,12 @@ import { cn } from "@/lib/utils"
 import { format, parseISO, subMonths, startOfMonth, endOfMonth } from "date-fns"
 
 const PAGE_SIZE = 10
-const CHART_COLORS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-  "oklch(0.50 0.04 250)",
-  "oklch(0.50 0.04 250)",
-  "oklch(0.50 0.04 250)",
-]
+function getBarColor(index: number, total: number): string {
+  const t = total <= 1 ? 0 : index / (total - 1)
+  const l = (0.42 + t * 0.28).toFixed(2)
+  const c = (0.16 - t * 0.08).toFixed(2)
+  return `oklch(${l} ${c} 250)`
+}
 
 const CAT_STYLES: Record<string, string> = {
   FOODS: "bg-emerald-50 text-emerald-700 border border-emerald-200",
@@ -93,23 +89,23 @@ function KpiCard({ title, value, delta, deltaType, sub, icon, iconBg, loading }:
   if (loading) {
     return (
       <Card>
-        <CardContent className="flex items-start justify-between pt-5">
+        <CardContent className="flex items-start justify-between">
           <div className="flex flex-col gap-2">
             <Skeleton className="h-3 w-28" />
-            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-7 w-24" />
             <Skeleton className="h-3 w-40" />
           </div>
-          <Skeleton className="h-11 w-11 rounded-xl" />
+          <Skeleton className="h-10 w-10 rounded-xl" />
         </CardContent>
       </Card>
     )
   }
   return (
     <Card>
-      <CardContent className="flex items-start justify-between pt-5">
+      <CardContent className="flex items-start justify-between">
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</span>
-          <span className="text-3xl font-bold tracking-tight tabular-nums text-foreground">{value}</span>
+          <span className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{value}</span>
           {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
           {delta && (
             <div className="flex items-center gap-1 mt-1">
@@ -128,7 +124,7 @@ function KpiCard({ title, value, delta, deltaType, sub, icon, iconBg, loading }:
             </div>
           )}
         </div>
-        <div className={cn("flex h-11 w-11 shrink-0 items-center justify-center rounded-xl", iconBg)}>
+        <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", iconBg)}>
           {icon}
         </div>
       </CardContent>
@@ -380,12 +376,12 @@ export default function VentasHistoricasPage() {
           />
         ) : topSku ? (
           <Card>
-            <CardContent className="flex items-start justify-between pt-5">
+            <CardContent className="flex items-start justify-between">
               <div className="flex flex-col gap-1">
                 <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   SKU Más Vendido
                 </span>
-                <span className="mt-1 font-mono text-lg font-bold tracking-tight text-foreground">
+                <span className="mt-1 text-lg font-bold tracking-tight text-foreground">
                   {topSku.id}
                 </span>
                 <span className="text-xs text-muted-foreground">
@@ -393,7 +389,7 @@ export default function VentasHistoricasPage() {
                   {topSku.pct.toFixed(1)}% del total
                 </span>
               </div>
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3">
                 <Star className="h-5 w-5" />
               </div>
             </CardContent>
@@ -526,7 +522,7 @@ export default function VentasHistoricasPage() {
                   type="category"
                   dataKey="sku"
                   width={140}
-                  tick={{ fontSize: 11, fontFamily: "var(--font-mono)", fill: "var(--foreground)" }}
+                  tick={{ fontSize: 11, fill: "var(--foreground)" }}
                 />
                 <Tooltip
                   formatter={(v: number) => [v.toLocaleString("es-CO"), "Unidades"]}
@@ -540,7 +536,7 @@ export default function VentasHistoricasPage() {
                 />
                 <Bar dataKey="units" radius={[0, 4, 4, 0]} label={{ position: "right", fontSize: 11, formatter: (v: number) => v.toLocaleString() }}>
                   {chartData.map((_, i) => (
-                    <Cell key={i} fill={CHART_COLORS[Math.min(i, CHART_COLORS.length - 1)]} />
+                    <Cell key={i} fill={getBarColor(i, chartData.length)} />
                   ))}
                 </Bar>
               </BarChart>
@@ -622,7 +618,7 @@ export default function VentasHistoricasPage() {
                           {r.date}
                         </td>
                         <td className="px-4 py-3">
-                          <span className="font-mono text-xs font-medium text-foreground">
+                          <span className="text-xs font-medium text-foreground">
                             {r.item_id}
                           </span>
                         </td>

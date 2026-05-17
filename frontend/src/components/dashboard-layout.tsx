@@ -92,6 +92,7 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
   const [toastVisible, setToastVisible] = useState(false)
   const [toastDismissed, setToastDismissed] = useState(false)
   const prevStatusRef = useRef<PredictionsStatus["status"]>("no_data")
+  const isInitialFetchRef = useRef(true)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const autoDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -102,8 +103,10 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
   const [invToastDismissed, setInvToastDismissed] = useState(false)
   const invAutoDismissRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
   const invProgressiveRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Ref-mirror so fetchInventoryAlerts closure doesn't go stale
-  const invDismissedRef = useRef(false)
+  // Persisted across navigations via sessionStorage — resets only on new predictions
+  const invDismissedRef = useRef(
+    typeof window !== "undefined" && sessionStorage.getItem("oceanic-inv-alert-dismissed") === "1"
+  )
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
@@ -122,9 +125,9 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
 
       if (total > 0 && !invDismissedRef.current) {
         setInvToastVisible(true)
-        // Auto-dismiss after 15 s
+        // Auto-dismiss after 8 s
         if (invAutoDismissRef.current) clearTimeout(invAutoDismissRef.current)
-        invAutoDismissRef.current = setTimeout(() => setInvToastVisible(false), 15000)
+        invAutoDismissRef.current = setTimeout(() => setInvToastVisible(false), 8000)
       }
     } catch {
       // Silent — don't break layout if inventory endpoint is unavailable
@@ -140,9 +143,9 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
       setPipelineStatus(next)
       if (data.last_run_at) setLastRunAt(data.last_run_at)
 
-      // Show toast on status transitions; also fires on initial load if already processing
+      // Show toast on real transitions; skip auto-show on initial mount if already processing
       if (prev !== next) {
-        if (next === "processing" || next === "uploaded") {
+        if ((next === "processing" || next === "uploaded") && !isInitialFetchRef.current) {
           setToastDismissed(false)
           setToastVisible(true)
         }
@@ -162,6 +165,8 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
           stopPolling()
         }
       }
+
+      isInitialFetchRef.current = false
 
       // Start/stop polling based on status
       if ((next === "processing" || next === "uploaded") && !pollRef.current) {
@@ -194,18 +199,17 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
     }
   }, [fetchInventoryAlerts])
 
-  // Re-fetch inventory alerts whenever pipeline finishes or data is refreshed
+  // Re-fetch inventory alerts when pipeline finishes with new predictions
   useEffect(() => {
     const handler = () => {
-      invDismissedRef.current = false   // new data → allow toast again
+      sessionStorage.removeItem("oceanic-inv-alert-dismissed")
+      invDismissedRef.current = false
       setInvToastDismissed(false)
       fetchInventoryAlerts()
     }
     window.addEventListener("pipeline:dataready", handler)
-    window.addEventListener("pipeline:refetch",   handler)
     return () => {
       window.removeEventListener("pipeline:dataready", handler)
-      window.removeEventListener("pipeline:refetch",   handler)
     }
   }, [fetchInventoryAlerts])
 
@@ -304,6 +308,7 @@ export function DashboardLayout({ children, title, subtitle, showLastRunAt }: Da
           setInvToastVisible(false)
           setInvToastDismissed(true)
           invDismissedRef.current = true
+          sessionStorage.setItem("oceanic-inv-alert-dismissed", "1")
         }}
       />
     </div>
