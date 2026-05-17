@@ -15,7 +15,7 @@ import {
 } from "recharts"
 import { format, parseISO } from "date-fns"
 import { es } from "date-fns/locale"
-import { Brain, TrendingUp, TrendingDown, Minus, Calendar, Package, BarChart3, ChevronRight, Layers, ScanBarcode, HelpCircle, AlertTriangle, CheckCircle2, Info } from "lucide-react"
+import { Brain, TrendingUp, TrendingDown, Minus, Calendar, Package, BarChart3, ChevronRight, Layers, ScanBarcode, HelpCircle, AlertTriangle, CheckCircle2, Info, Download } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -55,6 +55,7 @@ import {
   type PredictionRecord,
   type ModelMetricsResponse,
 } from "@/lib/api"
+import { exportToCSV } from "@/lib/export"
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -508,7 +509,23 @@ export default function PredictionsPage() {
 
             </div>
 
-            {/* Model metrics dialog */}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => exportToCSV(allPredictions, "predicciones_demanda.csv", {
+                  item_id: "SKU",
+                  date: "Fecha",
+                  yhat: "Prediccion",
+                  yhat_lower: "Limite_Inferior",
+                  yhat_upper: "Limite_Superior",
+                })}
+              >
+                <Download className="h-4 w-4" />
+                Exportar Predicciones
+              </Button>
+
+              {/* Model metrics dialog */}
             <Dialog open={metricsOpen} onOpenChange={setMetricsOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" className="gap-2">
@@ -688,6 +705,7 @@ export default function PredictionsPage() {
                 )}
               </DialogContent>
             </Dialog>
+            </div>
           </div>
 
           {/* Stat cards */}
