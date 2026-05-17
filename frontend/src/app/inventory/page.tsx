@@ -272,26 +272,28 @@ function StatCard({
 }) {
   return (
     <div className="rounded-xl border bg-card p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-muted-foreground">{label}</p>
-        <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${iconBg} ${iconColor}`}>
+      <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <p
+            className={
+              highlight === "destructive"
+                ? "text-2xl font-bold text-destructive"
+                : highlight === "warning"
+                ? "text-2xl font-bold text-warning"
+                : highlight === "violet"
+                ? "text-2xl font-bold text-violet-500"
+                : "text-2xl font-bold tracking-tight text-card-foreground"
+            }
+          >
+            {value}
+          </p>
+          <p className="text-xs text-muted-foreground">{sub}</p>
+        </div>
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconBg} ${iconColor}`}>
           {icon}
         </div>
       </div>
-      <p
-        className={
-          highlight === "destructive"
-            ? "mt-2 text-2xl font-bold text-destructive"
-            : highlight === "warning"
-            ? "mt-2 text-2xl font-bold text-warning"
-            : highlight === "violet"
-            ? "mt-2 text-2xl font-bold text-violet-500"
-            : "mt-2 text-2xl font-bold tracking-tight text-card-foreground"
-        }
-      >
-        {value}
-      </p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
     </div>
   )
 }

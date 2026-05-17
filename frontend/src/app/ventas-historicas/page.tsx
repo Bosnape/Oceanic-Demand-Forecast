@@ -89,23 +89,23 @@ function KpiCard({ title, value, delta, deltaType, sub, icon, iconBg, loading }:
   if (loading) {
     return (
       <Card>
-        <CardContent className="flex items-start justify-between pt-5">
+        <CardContent className="flex items-start justify-between">
           <div className="flex flex-col gap-2">
             <Skeleton className="h-3 w-28" />
-            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-7 w-24" />
             <Skeleton className="h-3 w-40" />
           </div>
-          <Skeleton className="h-11 w-11 rounded-xl" />
+          <Skeleton className="h-10 w-10 rounded-xl" />
         </CardContent>
       </Card>
     )
   }
   return (
     <Card>
-      <CardContent className="flex items-start justify-between pt-5">
+      <CardContent className="flex items-start justify-between">
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</span>
-          <span className="text-3xl font-bold tracking-tight tabular-nums text-foreground">{value}</span>
+          <span className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{value}</span>
           {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
           {delta && (
             <div className="flex items-center gap-1 mt-1">
@@ -124,7 +124,7 @@ function KpiCard({ title, value, delta, deltaType, sub, icon, iconBg, loading }:
             </div>
           )}
         </div>
-        <div className={cn("flex h-11 w-11 shrink-0 items-center justify-center rounded-xl", iconBg)}>
+        <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", iconBg)}>
           {icon}
         </div>
       </CardContent>
@@ -376,7 +376,7 @@ export default function VentasHistoricasPage() {
           />
         ) : topSku ? (
           <Card>
-            <CardContent className="flex items-start justify-between pt-5">
+            <CardContent className="flex items-start justify-between">
               <div className="flex flex-col gap-1">
                 <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   SKU Más Vendido
@@ -389,7 +389,7 @@ export default function VentasHistoricasPage() {
                   {topSku.pct.toFixed(1)}% del total
                 </span>
               </div>
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-chart-3/10 text-chart-3">
                 <Star className="h-5 w-5" />
               </div>
             </CardContent>
