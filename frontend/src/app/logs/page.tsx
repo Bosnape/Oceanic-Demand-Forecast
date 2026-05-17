@@ -9,7 +9,8 @@
  */
 
 import { useEffect, useState } from "react";
-import api from "@/lib/api"; // tu cliente Axios existente
+import api from "@/lib/api";
+import { DashboardLayout } from "@/components/dashboard-layout";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -126,14 +127,8 @@ export default function LogsPage() {
   }, []);
 
   return (
+    <DashboardLayout title="Audit Logs" subtitle="Historial de cargas de datos y ejecuciones del modelo de pronóstico.">
     <div className="min-h-screen bg-slate-50 px-6 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Audit Logs</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Historial de cargas de datos y ejecuciones del modelo de pronóstico.
-        </p>
-      </div>
 
       {/* Summary cards */}
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -318,11 +313,11 @@ export default function LogsPage() {
                           {fmtNum(log.avg_rmse, 2)}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-                          {log.avg_mape !== null ? `${(log.avg_mape * 100).toFixed(1)}%` : "—"}
+                          {log.avg_mape !== null ? `${log.avg_mape.toFixed(1)}%` : "—"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-700">
                           {log.avg_coverage_ic !== null
-                            ? `${(log.avg_coverage_ic * 100).toFixed(1)}%`
+                            ? `${log.avg_coverage_ic.toFixed(1)}%`
                             : "—"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-500">
@@ -341,6 +336,7 @@ export default function LogsPage() {
         </div>
       )}
     </div>
+    </DashboardLayout>
   );
 }
 
