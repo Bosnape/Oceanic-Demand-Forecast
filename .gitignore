@@ -6,3 +6,4 @@ venv/
 api/artifacts/
 .DS_Store
 node_modules/
+CLAUDE.md
