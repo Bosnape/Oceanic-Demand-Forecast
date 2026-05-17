@@ -18,7 +18,7 @@ from database.database import get_db, SessionLocal, init_db
 from database.models import (
     Company, DataSource, SalesTransaction, Prediction,
     InventorySnapshot, InventoryAnalysis, ModelMetrics,
-    UploadLog, ModelExecutionLog,                          # US-20
+    UploadLog, ModelExecutionLog,
 )
 from inventory.inventory_analysis import run_inventory_analysis
 
@@ -137,14 +137,11 @@ async def upload_sales(
 
         company_id = company.id
 
-        # Step 1: Parse file into DataFrame
         dataframe = parse_uploaded_file(file)
 
-        # Step 2: Validate and clean
         result = validate_sales_dataframe(dataframe)
         dataframe = result.cleaned
 
-        # Step 3: Save DataSource record with status "uploaded"
         data_source = DataSource(
             company_id=company_id,
             filename=file.filename,
@@ -154,7 +151,6 @@ async def upload_sales(
         db.commit()
         db.refresh(data_source)
 
-        # Step 4: Upsert rows into sales_transaction table
         records = [
             {
                 "company_id": company_id,
@@ -191,7 +187,6 @@ async def upload_sales(
         db.commit()
         transactions = records
 
-        # US-20 — Registrar carga exitosa
         upload_log = UploadLog(
             filename=file.filename,
             file_type="sales",
@@ -201,7 +196,6 @@ async def upload_sales(
         db.add(upload_log)
         db.commit()
 
-        # Step 5: Trigger Prophet pipeline in background
         background_tasks.add_task(
             run_prophet_background,
             company_id=company_id,
@@ -209,11 +203,9 @@ async def upload_sales(
         )
 
     except ValueError as error:
-        # US-20 — Registrar carga fallida
         _log_failed_upload(db, file.filename, "sales", str(error))
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
-        # US-20 — Registrar carga fallida
         _log_failed_upload(db, file.filename, "sales", str(error))
         raise HTTPException(status_code=500, detail=f"Error processing dataset: {error}") from error
 
@@ -261,14 +253,11 @@ async def upload_inventory(
 
         company_id = company.id
 
-        # Step 1: Parse file
         dataframe = parse_uploaded_file(file)
 
-        # Step 2: Validate and clean
         result = validate_inventory_dataframe(dataframe)
         dataframe = result.cleaned
 
-        # Step 3: Upsert rows into inventory_snapshot table
         inv_records = [
             {
                 "company_id": company_id,
@@ -305,7 +294,6 @@ async def upload_inventory(
         db.commit()
         snapshots = inv_records
 
-        # US-20 — Registrar carga exitosa
         upload_log = UploadLog(
             filename=file.filename,
             file_type="inventory",
@@ -319,11 +307,9 @@ async def upload_inventory(
         run_inventory_analysis(company_id, db)
 
     except ValueError as error:
-        # US-20 — Registrar carga fallida
         _log_failed_upload(db, file.filename, "inventory", str(error))
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
-        # US-20 — Registrar carga fallida
         _log_failed_upload(db, file.filename, "inventory", str(error))
         raise HTTPException(status_code=500, detail=f"Error processing inventory file: {error}") from error
 
@@ -341,7 +327,7 @@ async def upload_inventory(
     }
 
 # =============================================================================
-# GET /api/logs/uploads  (US-20)
+# GET /api/logs/uploads
 # =============================================================================
 
 @app.get(
@@ -375,7 +361,7 @@ async def get_upload_logs(db: Session = Depends(get_db)):
 
 
 # =============================================================================
-# GET /api/logs/model-executions  (US-20)
+# GET /api/logs/model-executions
 # =============================================================================
 
 @app.get(
@@ -1088,7 +1074,7 @@ def parse_uploaded_file(file: UploadFile) -> pd.DataFrame:
 
 
 def _log_failed_upload(db: Session, filename: str, file_type: str, error_message: str):
-    """US-20 — Helper para registrar una carga fallida sin hacer raise."""
+    """Persists a failed upload record without interrupting the main request flow."""
     try:
         upload_log = UploadLog(
             filename=filename,

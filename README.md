@@ -1,6 +1,20 @@
 # Oceanic Demand Forecast
 
-A fullstack demand forecasting and inventory management platform for retail. Users upload historical sales and inventory data; the system trains per-SKU Prophet models and returns 90-day demand predictions.
+Demand forecasting and inventory management platform for Colombian SMEs. Users upload historical sales and inventory data; the system trains per-SKU Prophet models and returns 90-day demand predictions with actionable inventory alerts.
+
+---
+
+## Features
+
+- **Data ingestion** — Upload sales and inventory files (CSV / Excel) with automatic validation and cleaning.
+- **Demand forecasting** — Per-SKU Prophet models trained in the background; 90-day predictions with confidence intervals.
+- **Sales view** — Explore historical transactions with filters by SKU, store, category, and date range. KPI cards for total units, revenue, and top-selling SKU.
+- **Inventory management** — Reorder point, safety stock, slow-moving detection, and immobilized capital per SKU.
+- **Stockout alerts** — Identifies SKUs at risk based on forecast demand vs. available stock and lead time.
+- **Demand deviation alerts** — Flags SKUs where predicted demand deviates significantly (≥25%) from recent historical behavior.
+- **Stock projection** — 30-day inventory burn-down chart per SKU using forecast demand.
+- **Report export** — Download forecast and inventory data as CSV.
+- **Audit logs** — Records every data upload and model execution with status and metrics.
 
 ---
 
@@ -21,12 +35,12 @@ A fullstack demand forecasting and inventory management platform for retail. Use
 Oceanic-Demand-Forecast/
 ├── backend/
 │   ├── api/
-│   │   ├── main.py            # FastAPI app — all endpoints
-│   │   └── validation.py      # DataFrame validation and cleaning
+│   │   ├── main.py               # FastAPI app — all endpoints
+│   │   └── validation.py         # DataFrame validation and cleaning
 │   ├── database/
-│   │   ├── models.py          # SQLAlchemy models
-│   │   ├── database.py        # Engine, session, table init
-│   │   └── base.py            # Declarative base
+│   │   ├── models.py             # SQLAlchemy models
+│   │   ├── database.py           # Engine, session, table init
+│   │   └── base.py               # Declarative base
 │   ├── demand_forecast/
 │   │   ├── prophet_demand_forecast.py   # Full ML pipeline
 │   │   ├── reference_sales.csv          # Reference dataset (35 SKUs)
@@ -35,23 +49,22 @@ Oceanic-Demand-Forecast/
 │   │   ├── inventory_analysis.py
 │   │   └── reference_inventory.csv
 │   └── requirements.txt
-├── frontend/
-│   └── src/
-│       ├── app/               # Next.js App Router pages
-│       │   ├── dashboard/
-│       │   ├── predictions/
-│       │   ├── inventory/
-│       │   ├── data-ingestion/
-│       │   └── login/
-│       ├── components/        # Reusable React components
-│       │   ├── ui/            # shadcn/ui component library
-│       │   ├── charts/
-│       │   └── tables/
-│       ├── lib/
-│       │   ├── api.ts         # Typed Axios API client
-│       │   └── auth-context.tsx
-│       └── data/              # Static reference data
-└── README.md
+└── frontend/src/
+    ├── app/
+    │   ├── dashboard/            # KPI cards, charts, and alerts
+    │   ├── ventas-historicas/    # Historical sales explorer
+    │   ├── predictions/          # Forecast table and model metrics
+    │   ├── inventory/            # Stock levels, alerts, and projection
+    │   ├── data-ingestion/       # File upload
+    │   ├── logs/                 # Audit logs
+    │   └── login/
+    ├── components/
+    │   ├── ui/                   # shadcn/ui component library
+    │   ├── charts/
+    │   └── tables/
+    └── lib/
+        ├── api.ts                # Typed Axios API client
+        └── auth-context.tsx
 ```
 
 ---
@@ -60,7 +73,7 @@ Oceanic-Demand-Forecast/
 
 - Python 3.10+
 - Node.js 18+
-- PostgreSQL running locally
+- PostgreSQL
 
 ---
 
@@ -77,45 +90,32 @@ cd Oceanic-Demand-Forecast
 
 ```bash
 cd backend
-
-# Create and activate virtual environment
 python -m venv venv
-source venv/bin/activate        # Mac/Linux
-# venv\Scripts\activate         # Windows
-
-# Install dependencies
+source venv/bin/activate      # Mac/Linux
+# venv\Scripts\activate       # Windows
 pip install -r requirements.txt
 ```
 
-Create a `.env` file inside `backend/`:
+Create `backend/.env`:
 
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/oceanic
 ```
 
-Initialize the database (creates all tables):
-
 ```bash
-python -m database.database
+python -m database.database   # initialize tables
+uvicorn api.main:app --reload  # http://localhost:8000
 ```
 
-Start the API server:
-
-```bash
-uvicorn api.main:app --reload
-```
-
-API available at `http://localhost:8000` — interactive docs at `http://localhost:8000/docs`
+Interactive docs at `http://localhost:8000/docs`
 
 ### 3. Frontend
 
 ```bash
 cd frontend/src
 npm install
-npm run dev
+npm run dev                    # http://localhost:3000
 ```
-
-App available at `http://localhost:3000`
 
 ---
 
@@ -125,13 +125,22 @@ App available at `http://localhost:3000`
 |---|---|---|
 | `POST` | `/upload-sales` | Upload sales CSV/XLSX — triggers Prophet pipeline in background |
 | `POST` | `/upload-inventory` | Upload inventory snapshot CSV/XLSX |
-| `GET` | `/api/predictions` | Get forecast results, filterable by `item_id`, `date_from`, `date_to` |
-| `GET` | `/api/predictions/status` | Get current pipeline status (`uploaded → processing → ready/failed`) |
-| `GET` | `/api/sales` | Get historical sales, filterable by SKU, store, category, date range |
-| `GET` | `/api/sales/range` | Get min/max date available in sales data |
-| `GET` | `/api/inventory` | Get current stock levels per SKU |
+| `GET` | `/api/predictions` | Forecast results, filterable by `item_id`, `date_from`, `date_to` |
+| `GET` | `/api/predictions/status` | Pipeline status (`uploaded → processing → ready/failed`) |
+| `GET` | `/api/predictions/metrics` | Model accuracy metrics (MAE, RMSE, MAPE, coverage, bias) per SKU |
+| `GET` | `/api/sales` | Historical sales, filterable by SKU, store, category, date range |
+| `GET` | `/api/sales/range` | Min/max date available in sales data |
+| `GET` | `/api/inventory` | Stock levels per SKU with reorder point, safety stock, and slow-moving flags |
+| `GET` | `/api/inventory/alerts` | Stockout risk alerts ordered by urgency |
+| `GET` | `/api/demand-alerts` | Demand deviation alerts (forecast vs. recent historical, ≥25% threshold) |
+| `GET` | `/api/logs/uploads` | Data upload history |
+| `GET` | `/api/logs/model-executions` | ML model execution history |
 
-### Sales file expected columns
+---
+
+## File Formats
+
+### Sales file
 
 | Column | Required | Type |
 |---|---|---|
@@ -145,7 +154,7 @@ App available at `http://localhost:3000`
 | `holiday_promotion` | No | Integer |
 | `event_name_1` | No | String |
 
-### Inventory file expected columns
+### Inventory file
 
 | Column | Required | Type |
 |---|---|---|

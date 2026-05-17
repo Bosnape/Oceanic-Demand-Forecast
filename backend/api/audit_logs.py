@@ -1,7 +1,4 @@
-"""
-US-20 — Audit Logs
-Crea este archivo en: backend/api/audit_logs.py
-"""
+"""Pydantic schemas and service helpers for upload and model execution audit logs."""
 
 from datetime import datetime
 from typing import Optional

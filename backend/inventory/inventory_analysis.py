@@ -14,11 +14,7 @@ DEAD_STOCK_DOH_THRESHOLD  = 180 # days of stock above this → dead stock / obso
 
 
 def run_inventory_analysis(company_id: int, db: Session) -> None:
-    """Calcula y persiste el analisis de inventario para una empresa.
-    Cubre:
-    - US-10 (Valentina): punto de reorden por SKU basado en forecast y lead time.
-    - US-08 (Martin): deteccion de inventario de movimiento lento y capital inmovilizado.
-    """
+    """Calculate and persist reorder points, safety stock, slow-moving flags, and immobilized capital per SKU."""
 
     today = date.today()
 
@@ -122,7 +118,6 @@ def run_inventory_analysis(company_id: int, db: Session) -> None:
     records = []
     for snapshot in snapshots:
 
-        # --- US-10: punto de reorden ---
         avg_daily_forecast = avg_forecast_by_item.get(snapshot.item_id)
         if avg_daily_forecast is None:
             reorder_point = None
@@ -131,7 +126,6 @@ def run_inventory_analysis(company_id: int, db: Session) -> None:
             reorder_point = avg_daily_forecast * snapshot.lead_time_days
             safety_stock  = avg_daily_forecast * (snapshot.lead_time_days * 0.25)
 
-        # --- US-08: slow-moving ---
         total_units_sold = units_sold_by_item.get(snapshot.item_id)
 
         if total_units_sold is None or snapshot.inventory_on_hand == 0:

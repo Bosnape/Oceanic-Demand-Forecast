@@ -156,7 +156,7 @@ export function getInventoryAlerts(): Promise<AlertsResponse> {
 }
 
 // ---------------------------------------------------------------------------
-// Model accuracy metrics (US-13)
+// Model accuracy metrics
 // ---------------------------------------------------------------------------
 
 export interface SkuMetrics {
@@ -195,7 +195,7 @@ export function getModelMetrics(): Promise<ModelMetricsResponse> {
 }
 
 // ---------------------------------------------------------------------------
-// Demand deviation alerts (US-17)
+// Demand deviation alerts
 // ---------------------------------------------------------------------------
 
 export interface DemandAlert {

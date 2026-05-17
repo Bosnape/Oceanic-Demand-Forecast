@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * US-20 — Audit Logs
- * Archivo: frontend/src/app/logs/page.tsx
- *
- * Vista dedicada de logs de cargas y ejecuciones del modelo.
- * Muestra dos tablas: Upload Logs y Model Execution Logs.
- */
-
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { DashboardLayout } from "@/components/dashboard-layout";

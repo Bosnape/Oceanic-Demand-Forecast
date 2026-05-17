@@ -542,7 +542,7 @@ def save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id):
         sku_count = len(records) - 1 if records else 0
         print(f"Model metrics saved — {sku_count} SKUs + 1 aggregate row")
 
-        return all_sku_stats  # US-20: retornamos para usarlas en el execution log
+        return all_sku_stats
 
     except Exception as e:
         db.rollback()
@@ -553,7 +553,7 @@ def save_model_metrics_to_db(forecasts, tuning_cutoff, best_params, company_id):
 
 
 # =============================================================================
-# Section 10: Save Model Execution Log (US-20)
+# Model Execution Log
 # =============================================================================
 
 def save_model_execution_log(
@@ -563,10 +563,7 @@ def save_model_execution_log(
     all_sku_stats: list,
     error_message: str = None,
 ):
-    """
-    US-20 — Persiste una fila en model_execution_logs con el resumen del pipeline.
-    Una fila por ejecución completa del pipeline (no por SKU).
-    """
+    """Persist a single row in model_execution_logs summarising the completed pipeline run."""
     db: Session = SessionLocal()
     try:
         avg_mae         = None
@@ -613,7 +610,7 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
     Trains on ALL historical data and forecasts the next 90 days.
     """
     FORECAST_DAYS = 90
-    pipeline_start = time.time()  # US-20: cronómetro del pipeline completo
+    pipeline_start = time.time()
 
     try:
         holidays_df = build_holidays(df)
@@ -643,7 +640,6 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
 
         duration = time.time() - pipeline_start
 
-        # US-20 — Registrar ejecución exitosa
         save_model_execution_log(
             status="success",
             skus_trained=len(forecasts),
@@ -665,7 +661,6 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
     except Exception as e:
         duration = time.time() - pipeline_start
 
-        # US-20 — Registrar ejecución fallida
         save_model_execution_log(
             status="failed",
             skus_trained=0,

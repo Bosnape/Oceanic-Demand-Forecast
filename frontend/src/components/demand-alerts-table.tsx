@@ -147,7 +147,7 @@ function DemandAlertRow({ alert }: { alert: DemandAlert }) {
 // Componente principal
 // ---------------------------------------------------------------------------
 
-/** Tabla de alertas de desviación de demanda predicha vs histórica (US-17). */
+/** Demand deviation alerts: forecast vs recent historical sales per SKU. */
 export function DemandAlertsTable() {
   const [alerts, setAlerts]         = useState<DemandAlert[]>([])
   const [message, setMessage]       = useState("")
