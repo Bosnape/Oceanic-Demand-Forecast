@@ -30,11 +30,11 @@ class ModelExecutionLogOut(BaseModel):
     id: int
     execution_date: datetime
     status: str
-    item_id: Optional[str]
-    mae: Optional[float]
-    rmse: Optional[float]
-    mape: Optional[float]
-    coverage: Optional[float]
+    skus_trained: Optional[int]
+    avg_mae: Optional[float]
+    avg_rmse: Optional[float]
+    avg_mape: Optional[float]
+    avg_coverage_ic: Optional[float]
     duration_seconds: Optional[float]
     error_message: Optional[str]
 
@@ -69,22 +69,22 @@ def log_upload(
 def log_model_execution(
     db: Session,
     status: str,
-    item_id: str = None,
-    mae: float = None,
-    rmse: float = None,
-    mape: float = None,
-    coverage: float = None,
+    skus_trained: int = None,
+    avg_mae: float = None,
+    avg_rmse: float = None,
+    avg_mape: float = None,
+    avg_coverage_ic: float = None,
     duration_seconds: float = None,
     error_message: str = None,
 ) -> ModelExecutionLog:
-    """Registra una ejecución del pipeline de Prophet."""
+    """Registra una ejecución completa del pipeline Prophet (una fila por run)."""
     entry = ModelExecutionLog(
         status=status,
-        item_id=item_id,
-        mae=mae,
-        rmse=rmse,
-        mape=mape,
-        coverage=coverage,
+        skus_trained=skus_trained,
+        avg_mae=avg_mae,
+        avg_rmse=avg_rmse,
+        avg_mape=avg_mape,
+        avg_coverage_ic=avg_coverage_ic,
         duration_seconds=duration_seconds,
         error_message=error_message,
     )

@@ -27,11 +27,11 @@ interface ModelExecutionLog {
   id: number;
   execution_date: string;
   status: "success" | "failed";
-  item_id: string | null;
-  mae: number | null;
-  rmse: number | null;
-  mape: number | null;
-  coverage: number | null;
+  skus_trained: number | null;
+  avg_mae: number | null;
+  avg_rmse: number | null;
+  avg_mape: number | null;
+  avg_coverage_ic: number | null;
   duration_seconds: number | null;
   error_message: string | null;
 }
@@ -261,7 +261,7 @@ export default function LogsPage() {
               Ejecuciones del modelo Prophet
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Una fila por SKU entrenado — métricas de accuracy del período de evaluación
+              Una fila por ejecución completa del pipeline — métricas agregadas de todos los SKUs entrenados
             </p>
           </div>
           {errorModel ? (
@@ -273,12 +273,12 @@ export default function LogsPage() {
                   <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3">#</th>
                     <th className="px-4 py-3">Fecha</th>
-                    <th className="px-4 py-3">SKU</th>
+                    <th className="px-4 py-3 text-right">SKUs</th>
                     <th className="px-4 py-3">Estado</th>
-                    <th className="px-4 py-3 text-right">MAE</th>
-                    <th className="px-4 py-3 text-right">RMSE</th>
-                    <th className="px-4 py-3 text-right">MAPE</th>
-                    <th className="px-4 py-3 text-right">Coverage</th>
+                    <th className="px-4 py-3 text-right">MAE prom.</th>
+                    <th className="px-4 py-3 text-right">RMSE prom.</th>
+                    <th className="px-4 py-3 text-right">MAPE prom.</th>
+                    <th className="px-4 py-3 text-right">Coverage prom.</th>
                     <th className="px-4 py-3 text-right">Duración (s)</th>
                     <th className="px-4 py-3">Error</th>
                   </tr>
@@ -305,24 +305,24 @@ export default function LogsPage() {
                         <td className="px-4 py-3 text-slate-500">
                           {fmt(log.execution_date)}
                         </td>
-                        <td className="px-4 py-3 font-mono text-xs text-slate-700">
-                          {log.item_id ?? "—"}
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                          {log.skus_trained ?? "—"}
                         </td>
                         <td className="px-4 py-3">
                           <StatusBadge status={log.status} />
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-                          {fmtNum(log.mae, 2)}
+                          {fmtNum(log.avg_mae, 2)}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-                          {fmtNum(log.rmse, 2)}
+                          {fmtNum(log.avg_rmse, 2)}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-                          {log.mape !== null ? `${(log.mape * 100).toFixed(1)}%` : "—"}
+                          {log.avg_mape !== null ? `${(log.avg_mape * 100).toFixed(1)}%` : "—"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-                          {log.coverage !== null
-                            ? `${(log.coverage * 100).toFixed(1)}%`
+                          {log.avg_coverage_ic !== null
+                            ? `${(log.avg_coverage_ic * 100).toFixed(1)}%`
                             : "—"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-500">
